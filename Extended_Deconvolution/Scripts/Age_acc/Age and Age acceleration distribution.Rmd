@@ -1,0 +1,71 @@
+---
+title: "Age and Age acceleration distribution"
+author: "Ji-Qing Chen"
+date: "10/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggsci)
+library(ggthemes)
+library(cowplot)
+```
+
+# Load Data
+```{r}
+# phenotype
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+```
+
+# Age & Methylation Age distribution
+```{r}
+AllBC_immune_Age_2 <- AllBC_immune_Age %>%
+                    select(Age, mAge_Hovath, mAge_Hannum, PhenoAge) %>%
+                    gather(key = Age_type, value = mAge)
+
+Distr  <- ggplot(AllBC_immune_Age_2, aes(x = mAge, by = Age_type, 
+                                        color = Age_type, ..scaled..)) + 
+          geom_density(alpha = 0.5) + 
+          labs(x = "Age (years)", y = "Density",colour = "") +
+          theme_classic() +
+          scale_color_manual(values=c("#374E55FF", "#DF8F44FF", "#00A1D5FF","#B24745FF")) +
+          theme(legend.position=c(0.2, 0.8), # For JAMA
+                legend.background = element_rect(linetype="solid", colour ="black"), # For JAMA
+                legend.title = element_blank(), # For JAMA
+                panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                text=element_text(size=12, face = "bold"),
+                axis.text.y=element_blank(), # For JAMA
+                plot.margin = unit(c(6,0,6,0), "pt"))
+```
+
+# # Age Acc distribution
+```{r}
+AllBC_immune_Age_acc <- AllBC_immune_Age %>%
+                        select(hovath_acc, hannum_acc, pheno_acc) %>%
+                        gather(key = Acc_type, value = Acc)
+
+Distr2 <- ggplot(AllBC_immune_Age_acc, aes(x = Acc, by = Acc_type, 
+                                        color = Acc_type, ..scaled..)) + 
+          geom_density(alpha = 0.5) + 
+          labs(x = "Age Acceleration (years)", y = "Density",colour = "") +
+          theme_classic() +
+          scale_color_manual(values=c("#DF8F44FF", "#00A1D5FF","#B24745FF")) +
+          theme(legend.position=c(0.2, 0.8), # For JAMA
+                legend.background = element_rect(linetype="solid", colour ="black"), # For JAMA
+                legend.title = element_blank(), # For JAMA
+                panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                text=element_text(size=12, face = "bold"),
+                axis.text.y=element_blank(), # For JAMA
+                plot.margin = unit(c(6,0,6,0), "pt"))
+```
+
+# Save
+```{r}
+Comb_Plot = plot_grid(Distr, Distr2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/plot/AllBC_Age_and_Age_Acc distribution_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+

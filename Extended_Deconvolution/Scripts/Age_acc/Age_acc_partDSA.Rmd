@@ -1,0 +1,225 @@
+---
+title: "Age_acc_partDSA"
+author: "Ji-Qing Chen"
+date: "3/9/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MST)
+library(dplyr)
+library(survival)
+library(survminer)
+library(partDSA)
+
+library(ggsci)
+library(cowplot)
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop.RData") # immune cell already winsorized
+```
+
+# Data Clean
+```{r}
+NMIBC_immune_Age <- AllBC_immune_Age %>% filter(muscinv == "no")
+```
+
+# imm + clinical features (OS)
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer_imm<-subset(NMIBC_immune_Age, select =c(Age, pheno_acc, Sex, Tumor_grade, Smoking_status, BCG, Bnv, CD4mem, CD8mem, Neu, NK))
+OSTime = NMIBC_immune_Age$TenYearSurv
+OScen = NMIBC_immune_Age$TenDead
+model.IPCW_imm = partDSA(x=xinfer_imm, y=Surv(log(OSTime),OScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW_imm
+showDSA(model.IPCW_imm)
+#Best 4 partitions
+ # Partition 1 [of 4]:
+  #  (Neu <= 67.090000)
+  #Partition 2 [of 4]:
+   # (pheno_acc <= -10.314535) && (67.090000 < Neu <= 82.440000)
+  #Partition 3 [of 4]:
+   # (82.440000 < Neu)
+  #Partition 4 [of 4]:
+   # (-10.314535 < pheno_acc) && (67.090000 < Neu <= 82.440000)
+
+GroupOS <- NMIBC_immune_Age %>% 
+           mutate(Group = ifelse(Neu <= 67.09, "Group 1", 
+                          ifelse(Neu > 82.44,"Group 3",
+                          ifelse(Neu > 67.09 & Neu <= 82.44 & pheno_acc > -10.31 , "Group 4","Group 2"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 30, y = 0, label = 35.71) +
+          annotate("text", x = 107, y = 0, label = 112.46) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Age + pheno_acc + Sex + Tumor_grade + Smoking_status + BCG + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+
+# Merge Group 2~4
+GroupOS_2 <- NMIBC_immune_Age %>% 
+           mutate(Group = ifelse(Neu <= 67.09, "Group 1","Group 2"))
+table(GroupOS_2$Group)
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS_2)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS_2)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 110, y = 0, label = 115.98) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Age + pheno_acc + Sex + Tumor_grade + Smoking_status + BCG + Group, data = GroupOS_2)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# immune distribution between 2 groups
+# Function
+```{r}
+Plot_Cell_Type <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = Group, 
+                                      color = Group)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = Group), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Cell Type Percent", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "bottom",
+                          text=element_text(size=12, face = "bold"),
+                          plot.margin = unit(c(6,0,6,0), "pt")) + 
+                  # legend.position controls where is legend
+                      scale_y_continuous(labels = scales::percent_format(
+                                       accuracy = 1)) 
+                return(PLOT)
+                
+}
+
+NLRPlot <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = Group, 
+                                      color = Group)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = Group), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Ratio", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "none")
+                return(PLOT)
+}
+```
+
+# Plot (Peripheral Blood)
+```{r}
+# cell proportion
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+colnames(Extended2)[1] <- "Sample_ID"
+GroupOS_2 <- GroupOS_2 %>% 
+             select(-Bas,-Bmem,-Bnv,-CD4mem,-CD4nv,-CD8mem,-CD8nv,-Eos,-Mono,-Neu,-NK,-Treg) %>%
+             left_join(Extended2) %>%
+             mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                     Lymph = Bmem + Bnv + NK + T_cell) %>%
+              mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph))
+
+Estimate1 <- GroupOS_2 %>%
+             dplyr::select(Group, Bas, Bmem, Bnv, 
+                           Eos, Mono, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage,-Group) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .22)
+
+Estimate2 <- GroupOS_2 %>%
+             dplyr::select(Group, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+             gather(key = Cell_Type, value = Percentage,-Group) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot2 = Estimate2 %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .4)
+
+Estimate3 <- GroupOS_2 %>%
+             dplyr::select(Group, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, -Group) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot3 = Estimate3 %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+
+Estimate4 <- GroupOS_2 %>%
+             dplyr::select( Group, NLR) %>%
+             gather(key = Cell_Type, value = Percentage,-Group)
+Cell_Type_Plot4 = Estimate4 %>%
+                  NLRPlot(DF = ., P_X = 0, P_Y = 35)
+
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3,Cell_Type_Plot2, Cell_Type_Plot4, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1.1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Survival tree/NMIBC_Blood.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
