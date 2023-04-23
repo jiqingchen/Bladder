@@ -1,0 +1,104 @@
+---
+title: "BLCA_Age_acc"
+author: "Ji-Qing Chen"
+date: "3/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(survival)
+library(survminer)
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+```
+
+# model - hannum_acc
+```{r}
+hannum_acc_modelOS <- summary(osx <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG, data=AllBC_immune_Age))
+cox.zph(osx)
+
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + NLR, data=AllBC_immune_Age)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Bmem, data=AllBC_immune_Age)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Bnv, data=AllBC_immune_Age)
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + CD4mem, data=AllBC_immune_Age)
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + CD4nv, data=AllBC_immune_Age)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + CD8mem, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + CD8nv, data=AllBC_immune_Age)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Mono, data=AllBC_immune_Age)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Neu, data=AllBC_immune_Age)
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Treg, data=AllBC_immune_Age)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + NK, data=AllBC_immune_Age)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + strata(muscinv) + Smoking_status + BCG + Bas, data=AllBC_immune_Age)
+summary(os12)
+cox.zph(os9)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[7,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+
+# RFS
+hannum_acc_modelRFS <- summary(osy <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) +Smoking_status + strata(BCG), data=AllBC_immune_Age))
+cox.zph(osy) # Age violates proportional assumption
+AllBC_immune_Age2 <- AllBC_immune_Age %>%
+                     mutate(Age_cate = ifelse(Age <= 65,"Age <= 65","Age > 65"))
+hannum_acc_modelRFS2 <- summary(osy2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cate + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) +Smoking_status + strata(BCG), data=AllBC_immune_Age2))
+cox.zph(osy2)
+
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + NLR, data=AllBC_immune_Age)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + CD4mem, data=AllBC_immune_Age)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + CD4nv, data=AllBC_immune_Age)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + Mono, data=AllBC_immune_Age)
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + Neu, data=AllBC_immune_Age)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + Treg, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + strata(muscinv) + Smoking_status + strata(BCG) + Bas, data=AllBC_immune_Age)
+summary(os7)
+cox.zph(os7)
+
+a = list(os1,os2,os3,os4,os5,os6,os7)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[5,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+
+```
+
+# Age Acc distribution
+```{r}
+library(ggsci)
+library(cowplot)
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData")
+
+AllBC_immune_Age2 <- AllBC_immune_Age %>%
+                     select(Age, mAge_Hannum) %>%
+                     `colnames<-`(c("Chronological Age","Hannum Age")) %>%
+                     gather(key = Age_type, value = mAge)
+anyNA(AllBC_immune_Age2)
+
+Distr2 <- ggplot(AllBC_immune_Age2, aes(x = mAge, by = Age_type, 
+                                        color = Age_type, ..scaled..)) + 
+          geom_density(alpha = 0.5) + 
+          labs(x = "Age (years)", y = "",colour = "") +
+          theme_classic() +
+          scale_color_nejm() +
+          theme(legend.position = "bottom",
+          text=element_text(size=12, face = "bold"),
+          plot.margin = unit(c(6,0,6,0), "pt"))
+
+Title = ggdraw() + draw_label("Supplemental Figure 2. Age distribution of bladder cancer patients.
+", x = 0, y = 1, vjust = 1, hjust = 0, size = 14, fontface = 'bold')
+Comb_Plot = plot_grid(Title, Distr2, ncol = 1, rel_heights = c(0.07,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/plot/AllBC Age  distribution2.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+```
+

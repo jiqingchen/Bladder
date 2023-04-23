@@ -1,0 +1,113 @@
+---
+title: "BLCA_Age_acc"
+author: "Ji-Qing Chen"
+date: "3/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(survival)
+library(survminer)
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+```
+
+# Data Clean
+```{r}
+NMIBC_immune_Age <- AllBC_immune_Age %>% filter(muscinv == "no")
+```
+
+# summary statistics
+```{r}
+mAge <- NMIBC_immune_Age %>% select(mAge_Hovath, mAge_Hannum, PhenoAge)
+Age_acc <- NMIBC_immune_Age %>% select(hovath_acc, hannum_acc, pheno_acc)
+summary(mAge)
+```
+
+# model 1
+```{r}
+# OS
+hovath_acc_modelOS <- summary(os1 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hovath_acc + Sex + Tumor_grade + Smoking_status + BCG, data=NMIBC_immune_Age))
+cox.zph(os1)
+hannum_acc_modelOS <- summary(os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG, data=NMIBC_immune_Age))
+cox.zph(os2)
+pheno_acc_modelOS <- summary(os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + pheno_acc + Sex + Tumor_grade + Smoking_status + BCG, data=NMIBC_immune_Age))
+cox.zph(os3)
+Ctic_acc_modelOS <- summary(os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Ctic_acc + Sex + Tumor_grade + Smoking_status + BCG, data=NMIBC_immune_Age))
+cox.zph(os4)
+save(hovath_acc_modelOS,hannum_acc_modelOS,pheno_acc_modelOS,Ctic_acc_modelOS, file = "/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/NMIBC_Age_acc_model1.RData")
+
+# RFS
+hovath_acc_modelRFS <- summary(os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hovath_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG), data=NMIBC_immune_Age))
+cox.zph(os1)
+hannum_acc_modelRFS <- summary(os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG), data=NMIBC_immune_Age))
+cox.zph(os2)
+pheno_acc_modelRFS <- summary(os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + pheno_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG), data=NMIBC_immune_Age))
+cox.zph(os3)
+Ctic_acc_modelRFS <- summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Ctic_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG), data=NMIBC_immune_Age))
+cox.zph(os4)
+```
+
+# model 2
+```{r}
+hovath_acc_model2 <- summary(os1 <- coxph(Surv(TenYearSurv, TenDead) ~ hovath_acc + Sex + Bnv + CD4mem + CD4nv + CD8mem + Neu + NK, data=NMIBC_immune_Age))
+cox.zph(os1)
+hannum_acc_model2 <- summary(os2 <- coxph(Surv(TenYearSurv, TenDead) ~ hannum_acc + Sex + Bnv + CD4mem + CD4nv + CD8mem + Neu + NK, data=NMIBC_immune_Age))
+cox.zph(os2)
+pheno_acc_model2 <- summary(os3 <- coxph(Surv(TenYearSurv, TenDead) ~ pheno_acc + Sex + Bnv + CD4mem + CD4nv + CD8mem + Neu + NK, data=NMIBC_immune_Age))
+cox.zph(os3)
+Ctic_acc_model2 <- summary(os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Ctic_acc + Sex + Bnv + CD4mem + CD4nv + CD8mem + Neu + NK, data=NMIBC_immune_Age))
+cox.zph(os4)
+save(hovath_acc_model2,hannum_acc_model2,pheno_acc_model2,Ctic_acc_model2, file = "/Users/chenjiqing/Downloads/Ctic_Project_JQ/Ctic_Project/NMIBC_Age_acc_model2.RData")
+```
+
+# model 3 - hannum_acc
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + NLR, data=NMIBC_immune_Age)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Bmem, data=NMIBC_immune_Age)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Bnv, data=NMIBC_immune_Age)
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + CD4mem, data=NMIBC_immune_Age)
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + CD4nv, data=NMIBC_immune_Age)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + CD8mem, data=NMIBC_immune_Age)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + CD8nv, data=NMIBC_immune_Age)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Mono, data=NMIBC_immune_Age)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Neu, data=NMIBC_immune_Age)
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Treg, data=NMIBC_immune_Age)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + NK, data=NMIBC_immune_Age)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Bas, data=NMIBC_immune_Age)
+cox.zph(os12)
+summary(os12)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[7,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+
+# RFS
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + NLR, data=NMIBC_immune_Age)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + CD4mem, data=NMIBC_immune_Age)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + CD4nv, data=NMIBC_immune_Age)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + Mono, data=NMIBC_immune_Age)
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + Neu, data=NMIBC_immune_Age)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + hannum_acc + strata(Sex) + Tumor_grade + Smoking_status + strata(BCG) + Treg, data=NMIBC_immune_Age)
+cox.zph(os6)
+summary(os6)
+
+a = list(os1,os2,os3,os4,os5,os6)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[5,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+
+```
+
