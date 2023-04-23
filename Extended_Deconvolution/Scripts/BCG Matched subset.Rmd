@@ -1,0 +1,189 @@
+---
+title: "BCG Matched Subset"
+author: "Ji-Qing Chen"
+date: "6/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MatchIt)
+library(tidyverse)
+library(dplyr)
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean.RData")
+rm(phenotype1,Recu)
+NMIBC <- phenotype2 %>% 
+         filter(muscinv =="no")
+rm(phenotype2)
+```
+
+# data clean
+```{r}
+NMIBC2 <- NMIBC %>%
+          select(Sample_Name,refage,sex,grade,grade2,smkstat2,initTxBlad) %>%
+          left_join(Cell_Type_Est)
+NMIBC3 <- NMIBC2 %>%
+          filter(initTxBlad == "Immuno" | initTxBlad == "TUR only") %>% 
+          mutate(ImmunoTx = ifelse(initTxBlad=="Immuno",
+                                   "BCG trt.","TUR only"))
+NMIBC3$ImmunoTx <- factor(NMIBC3$ImmunoTx, levels = c("BCG trt.","TUR only"), labels = c("BCG trt.","TUR only"))
+NMIBC3$ImmunoTx = relevel(NMIBC3$ImmunoTx, ref = "TUR only")
+```
+
+# match
+```{r}
+test <- matchit(ImmunoTx~ refage + sex + grade2, 
+                data = NMIBC3,
+                method = "nearest",
+                ratio = 2)
+summary(test)
+
+mchdata <- match.data(test)
+mchdata2 <- mchdata %>% select(Sample_Name, refage, sex, grade2, subclass, ImmunoTx)
+```
+
+# check
+```{r}
+male_HG_BCG = NMIBC3 %>% filter(sex == "male" & 
+                                  grade2 == "Grade 3 + 4" & 
+                                  ImmunoTx == "BCG trt.")
+male_HG_NoBCG = NMIBC3 %>% filter(sex == "male" & 
+                                  grade2 == "Grade 3 + 4" & 
+                                  ImmunoTx == "TUR only")
+male_LG_BCG = NMIBC3 %>% filter(sex == "male" & 
+                                  grade2 == "Grade 1 + 2" & 
+                                  ImmunoTx == "BCG trt.")
+male_LG_NoBCG = NMIBC3 %>% filter(sex == "male" & 
+                                  grade2 == "Grade 1 + 2" & 
+                                  ImmunoTx == "TUR only")
+female_HG_BCG = NMIBC3 %>% filter(sex == "female" & 
+                                  grade2 == "Grade 3 + 4" & 
+                                  ImmunoTx == "BCG trt.")
+female_HG_NoBCG = NMIBC3 %>% filter(sex == "female" & 
+                                  grade2 == "Grade 3 + 4" & 
+                                  ImmunoTx == "TUR only")
+female_LG_BCG = NMIBC3 %>% filter(sex == "female" & 
+                                  grade2 == "Grade 1 + 2" & 
+                                  ImmunoTx == "BCG trt.")
+female_LG_NoBCG = NMIBC3 %>% filter(sex == "female" & 
+                                  grade2 == "Grade 1 + 2" & 
+                                  ImmunoTx == "TUR only")
+```
+
+# match2
+```{r}
+male_HG = NMIBC3 %>% filter(sex == "male" & 
+                            grade2 == "Grade 3 + 4")
+match1 <- matchit(ImmunoTx~ refage + grade, 
+                  data = male_HG,
+                  method = "nearest",
+                  ratio = 2)
+mchdata1 <- match.data(match1)
+
+
+male_LG = NMIBC3 %>% filter(sex == "male" & 
+                            grade2 == "Grade 1 + 2")
+match2 <- matchit(ImmunoTx~ refage + grade, 
+                  data = male_LG,
+                  method = "nearest",
+                  ratio = 2)
+mchdata2 <- match.data(match2)
+
+
+female_HG = NMIBC3 %>% filter(sex == "female" & 
+                              grade2 == "Grade 3 + 4")
+match3 <- matchit(ImmunoTx~ refage + grade, 
+                  data = female_HG,
+                  method = "nearest",
+                  ratio = 2)
+mchdata3 <- match.data(match3)
+
+
+female_LG = NMIBC3 %>% filter(sex == "female" & 
+                              grade2 == "Grade 1 + 2")
+match4 <- matchit(ImmunoTx~ refage + grade, 
+                  data = female_LG,
+                  method = "nearest",
+                  ratio = 2)
+mchdata4 <- match.data(match4)
+
+NMIBC_BCGmatch <- NMIBC3 %>% filter(Sample_Name %in% mchdata1$Sample_Name |
+                                    Sample_Name %in% mchdata2$Sample_Name |
+                                    Sample_Name %in% mchdata3$Sample_Name |
+                                    Sample_Name %in% mchdata4$Sample_Name)
+```
+
+_____________________________
+# immune cell distribution
+
+# Function
+```{r}
+Plot_Cell_Type <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = ImmunoTx, 
+                                      color = ImmunoTx)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = ImmunoTx), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Cell Type Percent", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "bottom",
+                          text=element_text(size=12, face = "bold"),
+                          plot.margin = unit(c(6,0,6,0), "pt")) + 
+                  # legend.position controls where is legend
+                      scale_y_continuous(labels = scales::percent_format(
+                                       accuracy = 1)) 
+                return(PLOT)
+                
+        }
+```
+
+# BCG trt.
+```{r}
+Estimate1 <- NMIBC_BCGmatch %>%
+             dplyr::select(Sample_Name, ImmunoTx, 
+                           Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-ImmunoTx)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC_BCGmatch %>%
+             dplyr::select(Sample_Name,ImmunoTx,
+                           CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-ImmunoTx) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/BCGtrt_matchedData.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```

@@ -1,0 +1,88 @@
+---
+title: "Extended deconvolution"
+author: "Ji-Qing Chen"
+date: "1/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ENmix)
+library(minfi)
+'%!in%' <- Negate('%in%')
+library(FlowSorted.BloodExtended.EPIC)
+source("/Users/chenjiqing/Public/2018 Summer term/PD/Code/Panic_Dis/Scripts/Functions/meffil_cell_type_specific_methyl_function.R")
+```
+
+## Load sample beta
+```{r}
+beta <- readRDS("/Users/chenjiqing/Public/bladder cancer/raw data/AllBC_Combat_Betas2.rds")
+dim(beta)
+```
+
+## Get Reference Library
+```{r message=FALSE, warning=FALSE}
+load('/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/ExtDeconvLibrary/FlowSorted.BloodExtended.EPIC.compTable.rda')
+```
+
+# load phenotype
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean2.RData")
+rm(phenotype2,Recu)
+
+# weird data
+weird = phenotype1[which(phenotype1$ddstat=="dead" & phenotype1$RecurYN=="yes" &
+                         phenotype1$survreftmd<phenotype1$recsurgtmd),]
+
+# remove weird data
+phenotype1 <- phenotype1 %>% 
+              filter(Sample_Name != weird$Sample_Name)
+# retrieve sample name
+a <- as.character(phenotype1$Sample_Name)
+```
+
+# Get target sample beta
+```{r}
+beta_2 <- beta[,a]
+identical(a,colnames(beta_2))
+rm(beta)
+```
+
+# Get Cell Type Proportion
+```{r}
+library(FlowSorted.Blood.EPIC)
+intersect_CpG <- as.character(intersect(rownames(FlowSorted.BloodExtended.EPIC.compTable),rownames(beta_2)))
+
+Extended <- round(projectCellType_CP(beta_2[intersect_CpG,], FlowSorted.BloodExtended.EPIC.compTable[intersect_CpG,],lessThanOne =T)*100,4)
+boxplot(Extended)
+range(rowSums(Extended))
+
+# Force sum of immune cell proportions of each subjects to be 1
+Extended2 <- as.data.frame(Extended) %>% 
+             mutate(Total = rowSums(.))
+for( i in 1:12) {
+    Extended2[,i] = round((Extended2[,i]/Extended2[,'Total'])*100,2)
+}
+
+Extended2 <- Extended2 %>% dplyr::select(-Total) 
+
+range(rowSums(Extended2))
+
+boxplot(Extended2)
+```
+
+# summary
+```{r}
+summary(Extended)
+summary(Extended2)
+```
+
+# Save
+```{r}
+Extended2 <- Extended2 %>% rownames_to_column(var = "Sample_Name")
+
+# save
+save(Extended2, file = "/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion2.RData")
+```

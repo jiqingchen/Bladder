@@ -1,0 +1,1012 @@
+---
+title: "Extended cell proportion distribution"
+author: "Ji-Qing Chen"
+date: "5/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ggbeeswarm)
+library(ggsci)
+library(cowplot)
+library(ggpubr)
+library(grid)
+'%!in%' <- Negate('%in%')
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion2.RData")
+
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean.RData")
+rm(phenotype1,Recu)
+
+#rm(phenotype2)
+```
+
+# data clean
+```{r}
+# weird data
+weird = phenotype2[which(phenotype2$ddstat=="dead" & phenotype2$RecurYN=="yes" &
+                         phenotype2$survreftmd<phenotype2$recsurgtmd),]
+# remove weird data
+phenotype3 <- phenotype2 %>%
+          dplyr::select(Sample_Name,refage,sex,grade2,smkstat2,
+                 ImmunoTx,TenYearRFS, TenRFS, TenDead, TenYearSurv, 
+                 SurgToBlood,muscinv) %>%
+          left_join(Extended2) %>%
+          filter(Sample_Name %!in% weird$Sample_Name) %>%
+          mutate(CD4 = CD4mem + CD4nv + Treg,
+                 CD8 = CD8mem + CD8nv,
+                 Bcell = Bmem + Bnv) %>%
+          mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                 Lymph = Bmem + Bnv + NK + T_cell,
+                 Nv = Bnv + CD8nv + CD4nv) %>%
+          mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph),
+                 LM_ratio = ifelse(Mono == 0,Lymph/0.01, Lymph/Mono),
+                 Bnv_pct= ifelse(Bcell == 0,(Bnv/0.01)*100, (Bnv/Bcell)*100),
+                 CD4_to_8 = ifelse(CD8 == 0,CD4/0.01, CD4/CD8),
+                 CD4_nv_pct = ifelse(CD4 == 0, (CD4nv/0.01)*100, (CD4nv/CD4)*100),
+                 CD4nv_to_mem = ifelse(CD4mem == 0,CD4nv/0.01, CD4nv/CD4mem),
+                 CD8_nv_pct = ifelse(CD8 == 0, (CD8nv/0.01)*100, (CD8nv/CD8)*100),
+                 CD8nv_to_mem = ifelse(CD8mem == 0,CD8nv/0.01, CD8nv/CD8mem),
+                 CD8mem_Treg = ifelse(Treg == 0,CD8mem/0.01, CD8mem/Treg),
+                 Treg_pct = ifelse(CD4 == 0, (Treg/0.01)*100, (Treg/CD4)*100),
+                 Nv_Lymph = ifelse(Lymph == 0,Nv/0.01,Nv/Lymph))
+# Winsorization
+phenotype3_win <- phenotype3 %>%
+         mutate(Bas = ifelse(Bas <= quantile(phenotype3$Bas, probs = 0.98),
+                             Bas,quantile(phenotype3$Bas, probs = 0.98)),
+                Bmem = ifelse(Bmem <= quantile(phenotype3$Bmem, probs = 0.98),
+                              Bmem,quantile(phenotype3$Bmem, probs = 0.98)),
+                Bnv = ifelse(Bnv <= quantile(phenotype3$Bnv, probs = 0.98),
+                             Bnv,quantile(phenotype3$Bnv, probs = 0.98)),
+                CD4mem = ifelse(CD4mem <= quantile(phenotype3$CD4mem, probs = 0.98),
+                                CD4mem,quantile(phenotype3$CD4mem, probs = 0.98)),
+                CD4nv = ifelse(CD4nv <= quantile(phenotype3$CD4nv, probs = 0.98),
+                               CD4nv,quantile(phenotype3$CD4nv, probs = 0.98)),
+                CD8mem = ifelse(CD8mem <= quantile(phenotype3$CD8mem, probs = 0.98),
+                                CD8mem,quantile(phenotype3$CD8mem, probs = 0.98)),
+                CD8nv = ifelse(CD8nv <= quantile(phenotype3$CD8nv, probs = 0.98),
+                               CD8nv,quantile(phenotype3$CD8nv, probs = 0.98)),
+                Eos = ifelse(Eos <= quantile(phenotype3$Eos, probs = 0.98),
+                             Eos,quantile(phenotype3$Eos, probs = 0.98)),
+                Mono = ifelse(Mono <= quantile(phenotype3$Mono, probs = 0.98),
+                              Mono,quantile(phenotype3$Mono, probs = 0.98)),
+                Neu = ifelse(Neu <= quantile(phenotype3$Neu, probs = 0.02),
+                             quantile(phenotype3$Neu, probs = 0.02),Neu),
+                NK = ifelse(NK <= quantile(phenotype3$NK, probs = 0.98),
+                            NK,quantile(phenotype3$NK, probs = 0.98)),
+                Treg = ifelse(Treg <= quantile(phenotype3$Treg, probs = 0.98),
+                              Treg,quantile(phenotype3$Treg, probs = 0.98))) %>%
+         mutate(CD4 = ifelse(CD4 <= quantile(phenotype3$CD4, probs = 0.98),
+                             CD4,quantile(phenotype3$CD4, probs = 0.98)),
+                CD8 = ifelse(CD8 <= quantile(phenotype3$CD8, probs = 0.98),
+                             CD8,quantile(phenotype3$CD8, probs = 0.98)),
+                Bcell = ifelse(Bcell <= quantile(phenotype3$Bcell, probs = 0.98),
+                               Bcell,quantile(phenotype3$Bcell, probs = 0.98)),
+                Lymph = ifelse(Lymph <= quantile(phenotype3$Lymph, probs = 0.98),
+                               Lymph,quantile(phenotype3$Lymph, probs = 0.98)),
+                Nv = ifelse(Nv <= quantile(phenotype3$Nv, probs = 0.98),
+                            Nv,quantile(phenotype3$Nv, probs = 0.98))) %>%
+         mutate(NLR = ifelse(NLR <= quantile(phenotype3$NLR, probs = 0.98),
+                             NLR,quantile(phenotype3$NLR, probs = 0.98)),
+                LM_ratio = ifelse(LM_ratio <= quantile(phenotype3$LM_ratio, 
+                                                       probs = 0.98),
+                                  LM_ratio,quantile(phenotype3$LM_ratio, 
+                                                    probs = 0.98)),
+                CD4_to_8 = ifelse(CD4_to_8 <= quantile(phenotype3$CD4_to_8, 
+                                                       probs = 0.98),CD4_to_8,
+                                  quantile(phenotype3$CD4_to_8, probs = 0.98)),
+                CD4nv_to_mem = ifelse(CD4nv_to_mem <= quantile(phenotype3$CD4nv_to_mem,
+                                                               probs = 0.98),
+                                      CD4nv_to_mem,quantile(phenotype3$CD4nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8nv_to_mem = ifelse(CD8nv_to_mem <= quantile(phenotype3$CD8nv_to_mem,
+                                                               probs = 0.98),
+                                      CD8nv_to_mem,quantile(phenotype3$CD8nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8mem_Treg = ifelse(CD8mem_Treg <= median(phenotype3$CD8mem_Treg),
+                                    "Low CD8mem/Treg","High CD8mem/Treg"),
+                Nv_Lymph = ifelse(Nv_Lymph <= quantile(phenotype3$Nv_Lymph,probs = 0.98),
+                                  Nv_Lymph,quantile(phenotype3$Nv_Lymph,probs = 0.98)))
+
+NMIBC <- phenotype3 %>% 
+         filter(muscinv =="no") %>%
+         dplyr::select(-muscinv)
+MIBC <- phenotype3 %>% 
+        filter(muscinv =="yes") %>%
+        dplyr::select(-muscinv)
+```
+_____________________________
+## overall summary
+# plot function
+```{r}
+ImPlot <- function(DF) {
+ggplot(DF, aes(x = Cell_Type,
+               y = Percentage,
+               #color = Cell_Type,
+               fill = Cell_Type # For JAMA
+               )) +
+             stat_boxplot(geom = "errorbar", width = 0.2) + # For JAMA
+             geom_boxplot(position = position_dodge(width = 0.95), 
+                          outlier.shape = 1, # For JAMA
+                          #outlier.colour = NA, 
+                          outlier.size = 1.5) + 
+             #geom_point(position = position_jitterdodge(
+              # dodge.width= 0.95, jitter.width = 0.25),
+               #                   alpha=0.5,
+                #                  size = 0.1) +
+             labs(x = "", y = "Cell Type Percent") +
+             theme_classic() +
+             theme(legend.position="none",
+                   panel.grid.major.y = element_line(color = "grey",linetype = 1) # For JAMA
+                   ) +
+             #scale_color_nejm() +
+             scale_fill_jama() +
+             scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+}
+
+NeuPlot <- function(DF){
+            ggplot(DF, aes(x = "Neu", y = Neu)) +
+            stat_boxplot(geom = "errorbar", width = 0.2) + # For JAMA
+            geom_boxplot(position = position_dodge(width = 0.95), 
+                         outlier.shape = 1, # For JAMA
+                         #outlier.colour = NA,
+                         #col = 6,
+                         fill = "#374E55FF", # For JAMA
+                         outlier.size = 1.5) + 
+            #geom_point(position = position_jitter(w = 0.25),
+             #          alpha=0.5,
+              #         size = 0.1,
+               #        col= 6) + 
+            labs(x = "", y = "Cell Type Percent") +
+            theme_classic() +
+            theme(panel.grid.major.y = element_line(color = "grey",linetype = 1)) + # For JAMA
+            #scale_color_nejm() +
+            #scale_fill_jama() +
+            scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+}
+
+NLRPlot <- function(DF){
+            ggplot(DF, aes(x = "NLR",y = NLR)) +
+            stat_boxplot(geom = "errorbar", width = 0.2) + # For JAMA
+            geom_boxplot(position = position_dodge(width = 0.95), 
+                         outlier.shape = 1, # For JAMA
+                         #outlier.colour = NA,
+                         #col = 6,
+                         fill = "#DF8F44FF", # For JAMA
+                         outlier.size = 1.5) + 
+            #geom_point(position = position_jitter(w = 0.25),
+             #          alpha=0.5,
+              #         size = 0.1,
+               #        col= 6) + 
+            labs(x = "", y = "Ratio") +
+            theme_classic() +
+            theme(panel.grid.major.y = element_line(color = "grey",linetype = 1)) # For JAMA
+            #scale_color_nejm()
+}
+```
+
+# Plot
+```{r}
+# NMIBC
+Estimate1 <- NMIBC %>%
+            dplyr::select(Sample_Name, Bas, Bmem, Bnv, Eos, Mono, NK, Treg) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot1 <- ImPlot(Estimate1)
+Estimate2 <- NMIBC %>%
+            dplyr::select(Sample_Name, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot2 <- ImPlot(Estimate2)
+PlotNeu <- NMIBC %>% mutate(Neu = Neu/100) %>% NeuPlot()
+PlotNLR <- NLRPlot(NMIBC)
+
+# save
+Row1 = plot_grid(Plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, Plot2,PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/NMIBC_summary proportion.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+# MIBC patients
+Estimate1 <- MIBC %>%
+            dplyr::select(Sample_Name, Bas, Bmem, Bnv, Eos, Mono, NK, Treg) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot1 <- ImPlot(Estimate1)
+Estimate2 <- MIBC %>%
+            dplyr::select(Sample_Name, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot2 <- ImPlot(Estimate2)
+PlotNeu <- MIBC %>% mutate(Neu = Neu/100) %>% NeuPlot()
+PlotNLR <- NLRPlot(MIBC)
+
+# save
+Row1 = plot_grid(Plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, Plot2,PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/MIBC_summary proportion.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+# All BC patients
+Estimate1 <- phenotype3 %>%
+            dplyr::select(Sample_Name, Bas, Bmem, Bnv, Eos, NK, Treg, Mono) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot1 <- ImPlot(Estimate1)
+Estimate2 <- phenotype3 %>%
+            dplyr::select(Sample_Name, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+            gather(key = Cell_Type, value = Percentage, -Sample_Name) %>%
+            mutate(Percentage = Percentage/100)
+Plot2 <- ImPlot(Estimate2)
+PlotNeu <- phenotype3 %>% mutate(Neu = Neu/100) %>% NeuPlot()
+PlotNLR <- NLRPlot(phenotype3)
+
+# save
+Row1 = plot_grid(Plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, Plot2,PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/AllBC_summary proportion_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+_____________________________
+
+# NMIBC + MIBC
+
+# Function
+```{r}
+# Plot Cell Type
+Plot_Cell_Type <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage,
+                                      # color = muscinv,
+                                      fill = muscinv, # For JAMA
+                                      by = muscinv)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, # For JAMA
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.5) + # For JAMA
+                      #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                       #                                          jitter.width = 0.25), 
+                        #         alpha=0.5,size = 0.1) +
+                      stat_compare_means(aes(group = muscinv), 
+                                         label = "p.format", 
+                                         label.x = P_X, label.y = P_Y, 
+                                         size = 3.6, 
+                                         method = "wilcox.test") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "bottom", # legend.position controls where is legend
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            legend.title = element_blank(), # For JAMA
+                            text=element_text(size=12, 
+                                              face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt")) + 
+                     scale_y_continuous(labels = scales::percent_format(accuracy = 1)) 
+                return(PLOT)
+}
+
+NeuPlot <- function(DF){
+            ggplot(DF, aes(x = "Neu",
+                           y = Neu, 
+                           #color = muscinv,
+                           fill = muscinv,
+                           by = muscinv)) +
+            stat_boxplot(geom = "errorbar", width = 0.2,
+                         position = position_dodge(width = 0.95)) + # For JAMA
+            geom_boxplot(position = position_dodge(width = 0.95), 
+                         outlier.shape = 1, 
+                         #outlier.colour = NA, 
+                         outlier.size = 1.5) + 
+            #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+             #                                          jitter.width = 0.25),
+              #         alpha=0.5,size = 0.1) + 
+            stat_compare_means(aes(group = muscinv), 
+                               label = "p.format", 
+                               label.x = 0, label.y = 1, 
+                               size = 3.6, 
+                               method = "wilcox.test") +
+            labs(x = "", y = "Cell Type Percent") +
+            theme_classic() +
+            #scale_color_nejm() +
+            scale_fill_jama() +
+            theme(legend.position = "none", # legend.position controls where is legend
+                  panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                  text=element_text(size=12,face = "bold"),
+                  plot.margin = unit(c(6,0,6,0), "pt")) +
+            scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+}
+
+# Plot Cell Type
+Cell_Ratio_Plot <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = "NLR", 
+                                      y = NLR, 
+                                      #color = muscinv,
+                                      fill = muscinv,
+                                      by = muscinv)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, 
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.5) +
+                       #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                        #                               jitter.width = 0.25),
+                         #        alpha=0.5,size = 0.1) +
+                       stat_compare_means(aes(group = muscinv), 
+                                          label = "p.format", 
+                                          label.x = P_X, 
+                                          label.y = P_Y, 
+                                          size = 3.6, 
+                                          method = "wilcox.test") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "none",
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            text=element_text(size=12, face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt"), 
+                            axis.text.x = element_text(size = 7))
+                return(PLOT)
+                
+        }
+```
+
+# plot
+```{r}
+phenotype3 <- phenotype3 %>%
+              mutate(muscinv = ifelse(muscinv == 'no',"NMIBC","MIBC"))
+
+Estimate <- phenotype3 %>%
+            dplyr::select(muscinv, Bas, Bmem, Bnv, Eos, Mono, NK, Treg) %>%
+            gather(key = Cell_Type, value = Percentage, -muscinv) %>%
+            mutate(Percentage = Percentage/100)
+plot1 = Plot_Cell_Type(Estimate, YLab = "Cell Type Percent", P_X = 0, P_Y = .26)
+
+Estimate2 <- phenotype3 %>%
+            dplyr::select(muscinv, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+            gather(key = Cell_Type, value = Percentage, -muscinv) %>%
+            mutate(Percentage = Percentage/100)
+plot2 = Plot_Cell_Type(Estimate2, YLab = "Cell Type Percent", P_X = 0, P_Y = .4)
+
+PlotNeu <- phenotype3 %>% mutate(Neu = Neu/100) %>% NeuPlot()
+
+Ratios <- phenotype3 %>%
+          dplyr::select(muscinv, NLR)
+PlotNLR <- Cell_Ratio_Plot(Ratios,YLab = 'Ratio', P_X = 1.45, P_Y = 33)
+
+# save
+Row1 = plot_grid(plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, plot2, PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/MIBC_NMIBC_summary proportion_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+_____________________________
+
+# Distribution
+```{r}
+hist(NMIBC2$Bmem)
+NMIBC4 <- NMIBC2 %>% select(Bas,Eos,Bmem,Bnv,CD4mem,CD4nv) %>%
+                     mutate(Bas = Bas*100, Eos = Eos*100, 
+                            Bmem = Bmem*100, Bnv = Bnv*100, 
+                            CD4mem = CD4mem*100, CD4nv = CD4nv*100) %>%
+                     gather(key = Cell_Type, value = Proportions)
+Distr1 <- ggplot(NMIBC4, aes(x = Proportions, by = Cell_Type, 
+                             color = Cell_Type, ..scaled..)) + 
+          geom_density(alpha = 0.5) + 
+          labs(x = "Proportions", y = "", 
+               colour = "") +
+          theme_classic() +
+          scale_color_nejm() +
+          theme(legend.position = "bottom",
+                text=element_text(size=12, face = "bold"),
+                plot.margin = unit(c(6,0,6,0), "pt"))
+
+NMIBC5 <- NMIBC2 %>% select(Mono,Neu,NK,Treg,CD8mem,CD8nv) %>%
+                     mutate(Mono = Mono*100, Neu = Neu*100, 
+                            NK = NK*100, Treg = Treg*100, 
+                            CD8mem = CD8mem*100, CD8nv = CD8nv*100) %>%
+                     gather(key = Cell_Type, value = Proportions)
+Distr2 <- ggplot(NMIBC5, aes(x = Proportions, by = Cell_Type, 
+                             color = Cell_Type, ..scaled..)) + 
+          geom_density(alpha = 0.5) + 
+          labs(x = "Proportions", y = "", 
+               colour = "") +
+          theme_classic() +
+          scale_color_nejm() +
+          theme(legend.position = "bottom",
+                text=element_text(size=12, face = "bold"),
+                plot.margin = unit(c(6,0,6,0), "pt"))
+# save
+Title = ggdraw() + draw_label("Proportion Distribution", x = 0, y = 1, vjust = 1, hjust = 0, size = 14, fontface = 'bold')
+Comb_Plot = plot_grid(Title,Distr1, Distr2, ncol = 1, rel_heights = c(0.07,1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/proportion distribution.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+_____________________
+
+# Function
+```{r}
+Plot_Cell_Type <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = Event, 
+                                      color = Event)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = Event), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Cell Type Percent", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "bottom",
+                          text=element_text(size=12, face = "bold"),
+                          plot.margin = unit(c(6,0,6,0), "pt")) + 
+                  # legend.position controls where is legend
+                      scale_y_continuous(labels = scales::percent_format(
+                                       accuracy = 1)) 
+                return(PLOT)
+                
+        }
+```
+
+# Grade
+```{r}
+Estimate1 <- NMIBC2 %>%
+             dplyr::select(Sample_Name, grade2, Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, -Sample_Name,-grade2)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC2 %>%
+             dplyr::select(Sample_Name,grade2,CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, -Sample_Name,-grade2) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Grade.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# Sex
+```{r}
+Estimate1 <- NMIBC2 %>%
+             dplyr::select(Sample_Name, sex, Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, -Sample_Name,-sex)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC2 %>%
+             dplyr::select(Sample_Name,sex,CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, -Sample_Name,-sex) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Sex.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# Smoking
+```{r}
+Estimate1 <- NMIBC2 %>%
+             dplyr::select(Sample_Name, smkstat2, 
+                           Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-smkstat2)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC2 %>%
+             dplyr::select(Sample_Name,smkstat2,
+                           CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-smkstat2) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Smoking.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# BCG trt.
+```{r}
+NMIBC3 <- NMIBC2 %>%
+          filter(initTxBlad == "Immuno" | initTxBlad == "TUR only") %>% 
+          mutate(ImmunoTx = ifelse(initTxBlad=="Immuno",
+                                   "BCG trt.","TUR only"))
+NMIBC3$ImmunoTx <- factor(NMIBC3$ImmunoTx, levels = c("BCG trt.","TUR only"), labels = c("BCG trt.","TUR only"))
+NMIBC3$ImmunoTx = relevel(NMIBC3$ImmunoTx, ref = "TUR only")
+
+Estimate1 <- NMIBC3 %>%
+             dplyr::select(Sample_Name, ImmunoTx, 
+                           Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-ImmunoTx)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC3 %>%
+             dplyr::select(Sample_Name,ImmunoTx,
+                           CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-ImmunoTx) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/BCGtrt.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# With recurrence or Death vs Alive and no recurrence
+```{r}
+# data clean
+NMIBC5 <- NMIBC %>%
+          select(Sample_Name,RecurYN,ddstat) %>%
+          left_join(Cell_Type_Est) 
+NMIBC5$RecurYN[which(is.na(NMIBC5$RecurYN) == T)] <- "no"
+
+NMIBC5 <- NMIBC5 %>%
+          mutate(Event = ifelse(ddstat=="dead" | RecurYN =="yes", "Recurrence or deceased","Alive and no recurrence"))
+
+# plot
+Estimate1 <- NMIBC5 %>%
+             dplyr::select(Sample_Name, Event, 
+                           Bas, Bmem, Bnv, Eos, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-Event)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .16)
+Estimate2 <- NMIBC5 %>%
+             dplyr::select(Sample_Name,Event,
+                           CD4mem,CD4nv,CD8mem,CD8nv,Mono, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, 
+                    -Sample_Name,-Event) %>%
+             mutate(Neu = ifelse(Cell_Type == "Neu", "Yes", "No"))
+Cell_Type_Plot2 = Estimate2 %>%
+                  filter(Neu == "No") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .41)
+Cell_Type_Plot3 = Estimate2 %>%
+                  filter(Neu == "Yes") %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3, Cell_Type_Plot2, ncol = 2, rel_widths = c(1,3.5))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Event.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+_______________________________
+# Correlation plots
+
+# Function
+```{r}
+Cor_CpG <- function(DF, Z) {
+Cor_age <- cor.test(DF$survreftmd , DF$cell , method = "spearman") # smooth line use spearman
+text1 <- paste0("r=", round(Cor_age$estimate,3), 
+                "  p=", round(Cor_age$p.value ,8))
+my_grob_1 = grid.text(text1, x=0.7,  y=0.9, 
+                      gp=gpar(col="firebrick", 
+                              fontsize=8, 
+                              fontface="bold"))
+PLOT = ggplot(DF, aes(x = cell, y = survreftmd)) +
+       geom_point(size = 1) +
+       ylim(0,NA) +
+       geom_smooth(method = lm, 
+                   formula = y ~ splines::bs(x, 3), 
+                   se = TRUE, 
+                   fullrange = FALSE, 
+                   level = 0.95) +
+       geom_rug() +
+       labs(x = Z, y = "Survival Time (Month)", colour = "") + # y ="" needs to change according to different cell type
+       theme_classic() +
+       scale_color_nejm() +
+       theme(legend.position = "none", 
+             text=element_text(size=10, face = "bold"), 
+             plot.margin = unit(c(6,0,6,0), "pt")) +
+       annotation_custom(my_grob_1)
+return(PLOT)
+}
+```
+
+# Age plot
+```{r}
+Bas_age <- NMIBC2 %>% select(refage,Bas) %>%
+                      mutate(cell = Bas*100) %>% 
+                      Cor_CpG(.,Z = "Basophils (%)")
+Eos_age <- NMIBC2 %>% select(refage,Eos) %>%
+                      mutate(cell = Eos*100) %>% 
+                      Cor_CpG(.,Z = "Eosinophils (%)")
+Bmem_age <- NMIBC2 %>% select(refage,Bmem) %>%
+                       mutate(cell = Bmem*100) %>% 
+                       Cor_CpG(.,Z = "B-cells memory (%)")
+Bnv_age <- NMIBC2 %>% select(refage,Bnv) %>%
+                      mutate(cell = Bnv*100) %>% 
+                      Cor_CpG(.,Z = "B-cells naïve (%)")
+CD4mem_age <- NMIBC2 %>% select(refage,CD4mem) %>%
+                         mutate(cell = CD4mem*100) %>% 
+                         Cor_CpG(.,Z = "Helper CD4(+) T-cells memory (%)")
+CD4nv_age <- NMIBC2 %>% select(refage,CD4nv) %>%
+                        mutate(cell = CD4nv*100) %>% 
+                        Cor_CpG(.,Z = "Helper CD4(+) T-cells naïve (%)")
+# save
+Row1 = plot_grid(Bas_age,Eos_age, ncol = 2)
+Row2 = plot_grid(Bmem_age, Bnv_age, ncol = 2)
+Row3 = plot_grid(CD4mem_age, CD4nv_age, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age1.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+CD8mem_age <- NMIBC2 %>% select(refage,CD8mem) %>%
+                         mutate(cell = CD8mem*100) %>% 
+                         Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells memory (%)")
+CD8nv_age <- NMIBC2 %>% select(refage,CD8nv) %>%
+                        mutate(cell = CD8nv*100) %>% 
+                        Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells naïve (%)")
+Mono_age <- NMIBC2 %>% select(refage,Mono) %>%
+                       mutate(cell = Mono*100) %>% 
+                       Cor_CpG(.,Z = "Monocytes (%)")
+Neu_age <- NMIBC2 %>% select(refage,Neu) %>%
+                      mutate(cell = Neu*100) %>% 
+                      Cor_CpG(.,Z = "Neutrophils (%)")
+NK_age <- NMIBC2 %>% select(refage,NK) %>%
+                      mutate(cell = NK*100) %>% 
+                      Cor_CpG(.,Z = "Natural killer cells (%)")
+Treg_age <- NMIBC2 %>% select(refage,Treg) %>%
+                      mutate(cell = Treg*100) %>% 
+                      Cor_CpG(.,Z = "CD4(+) T regulatory cells (%)")
+# save
+Row1 = plot_grid(CD8mem_age,CD8nv_age, ncol = 2)
+Row2 = plot_grid(Mono_age, Neu_age, ncol = 2)
+Row3 = plot_grid(NK_age, Treg_age, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age2.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+___________________
+## Age plot by sex
+# Function
+```{r}
+Cor_CpG <- function(DF, Z) {
+DF_female = DF %>% filter(sex == "female")
+DF_male = DF %>% filter(sex == "male")
+Cor_age_female <- cor.test(DF_female$refage , DF_female$cell , method = "spearman") # smooth line use spearman
+Cor_age_male <- cor.test(DF_male$refage , DF_male$cell , method = "spearman")
+text_female <- paste0("r=", round(Cor_age_female$estimate,3), 
+                      "  p=", round(Cor_age_female$p.value ,3))
+text_male <- paste0("r=", round(Cor_age_male$estimate,3), 
+                      "  p=", round(Cor_age_male$p.value ,6))
+my_grob_female = grid.text(text_female, x=0.85,  y=0.95, 
+                      gp=gpar(col="firebrick", 
+                              fontsize=8, 
+                              fontface="bold"))
+my_grob_male = grid.text(text_male, x=0.85,  y=0.9, 
+                      gp=gpar(col="steelblue", 
+                              fontsize=8, 
+                              fontface="bold"))
+PLOT = ggplot(DF, aes(x = cell, y = refage, color =sex)) +
+       geom_point(size = 1) +
+       #ylim(0,NA) +
+       geom_smooth(method = lm, 
+                   formula = y ~ splines::bs(x, 3), 
+                   se = TRUE, 
+                   fullrange = FALSE, 
+                   level = 0.95) +
+       geom_rug() +
+       labs(x = Z, y = "Age", colour = "") + # y ="" needs to change according to different cell type
+       theme_classic() +
+       scale_color_nejm() +
+       theme(legend.position = c(0.9,0.2), 
+             text=element_text(size=10, face = "bold"), 
+             plot.margin = unit(c(6,0,6,0), "pt")) +
+       annotation_custom(my_grob_female) +
+       annotation_custom(my_grob_male)
+return(PLOT)
+}
+```
+
+# plot
+```{r}
+NMIBC2$sex = relevel(NMIBC2$sex, ref = 'female')
+Bas_age <- NMIBC2 %>% select(refage,Bas,sex) %>%
+                      mutate(cell = Bas*100) %>% 
+                      Cor_CpG(.,Z = "Basophils (%)")
+Eos_age <- NMIBC2 %>% select(refage,Eos,sex) %>%
+                      mutate(cell = Eos*100) %>% 
+                      Cor_CpG(.,Z = "Eosinophils (%)")
+Bmem_age <- NMIBC2 %>% select(refage,Bmem,sex) %>%
+                       mutate(cell = Bmem*100) %>% 
+                       Cor_CpG(.,Z = "B-cells memory (%)")
+Bnv_age <- NMIBC2 %>% select(refage,Bnv,sex) %>%
+                      mutate(cell = Bnv*100) %>% 
+                      Cor_CpG(.,Z = "B-cells naïve (%)")
+CD4mem_age <- NMIBC2 %>% select(refage,CD4mem,sex) %>%
+                         mutate(cell = CD4mem*100) %>% 
+                         Cor_CpG(.,Z = "Helper CD4(+) T-cells memory (%)")
+CD4nv_age <- NMIBC2 %>% select(refage,CD4nv,sex) %>%
+                        mutate(cell = CD4nv*100) %>% 
+                        Cor_CpG(.,Z = "Helper CD4(+) T-cells naïve (%)")
+
+
+CD8mem_age <- NMIBC2 %>% select(refage,CD8mem,sex) %>%
+                         mutate(cell = CD8mem*100) %>% 
+                         Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells memory (%)")
+CD8nv_age <- NMIBC2 %>% select(refage,CD8nv,sex) %>%
+                        mutate(cell = CD8nv*100) %>% 
+                        Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells naïve (%)")
+Mono_age <- NMIBC2 %>% select(refage,Mono,sex) %>%
+                       mutate(cell = Mono*100) %>% 
+                       Cor_CpG(.,Z = "Monocytes (%)")
+Neu_age <- NMIBC2 %>% select(refage,Neu,sex) %>%
+                      mutate(cell = Neu*100) %>% 
+                      Cor_CpG(.,Z = "Neutrophils (%)")
+NK_age <- NMIBC2 %>% select(refage,NK,sex) %>%
+                      mutate(cell = NK*100) %>% 
+                      Cor_CpG(.,Z = "Natural killer cells (%)")
+Treg_age <- NMIBC2 %>% select(refage,Treg,sex) %>%
+                      mutate(cell = Treg*100) %>% 
+                      Cor_CpG(.,Z = "CD4(+) T regulatory cells (%)")
+# save
+Row1 = plot_grid(Bas_age,Eos_age, ncol = 2)
+Row2 = plot_grid(Bmem_age, Bnv_age, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex1.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+Row3 = plot_grid(CD4mem_age, CD4nv_age, ncol = 2)
+Row4 = plot_grid(CD8mem_age, CD8nv_age, ncol = 2)
+Comb_Plot2 = plot_grid(Row3, Row4,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex2.pdf"), plot = Comb_Plot2, height = 9, width = 7.5)
+Row5 = plot_grid(Mono_age, Neu_age, ncol = 2)
+Row6 = plot_grid(NK_age, Treg_age, ncol = 2)
+Comb_Plot3 = plot_grid(Row5, Row6,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex3.pdf"), plot = Comb_Plot3, height = 9, width = 7.5)
+```
+
+# potential outlier detection Then re-plot
+```{r}
+NMIBC2$sex = relevel(NMIBC2$sex, ref = 'female')
+
+boxplot_outlier_remove = function(DF,Targeet){
+        value_out = boxplot.stats(Targeet)$out
+        value_in =  which(Targeet %!in% c(value_out))
+        Data_only_in = DF[value_in,]
+        return(Data_only_in)
+}
+
+Bas_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Bas) %>%
+                      select(refage,Bas,sex) %>%
+                      mutate(cell = Bas*100) %>% 
+                      Cor_CpG(.,Z = "Basophils (%)")
+Eos_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Eos) %>%
+                      select(refage,Eos,sex) %>%
+                      mutate(cell = Eos*100) %>% 
+                      Cor_CpG(.,Z = "Eosinophils (%)")
+Bmem_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Bmem) %>%
+                       select(refage,Bmem,sex) %>%
+                       mutate(cell = Bmem*100) %>% 
+                       Cor_CpG(.,Z = "B-cells memory (%)")
+Bnv_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Bnv) %>%
+                      select(refage,Bnv,sex) %>%
+                      mutate(cell = Bnv*100) %>% 
+                      Cor_CpG(.,Z = "B-cells naïve (%)")
+CD4mem_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$CD4mem) %>%
+                         select(refage,CD4mem,sex) %>%
+                         mutate(cell = CD4mem*100) %>% 
+                         Cor_CpG(.,Z = "Helper CD4(+) T-cells memory (%)")
+CD4nv_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$CD4nv) %>%
+                        select(refage,CD4nv,sex) %>%
+                        mutate(cell = CD4nv*100) %>% 
+                        Cor_CpG(.,Z = "Helper CD4(+) T-cells naïve (%)")
+
+
+CD8mem_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$CD8mem) %>%
+                         select(refage,CD8mem,sex) %>%
+                         mutate(cell = CD8mem*100) %>% 
+                         Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells memory (%)")
+CD8nv_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$CD8nv) %>%
+                        select(refage,CD8nv,sex) %>%
+                        mutate(cell = CD8nv*100) %>% 
+                        Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells naïve (%)")
+Mono_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Mono) %>%
+                       select(refage,Mono,sex) %>%
+                       mutate(cell = Mono*100) %>% 
+                       Cor_CpG(.,Z = "Monocytes (%)")
+Neu_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Neu) %>%
+                      select(refage,Neu,sex) %>%
+                      mutate(cell = Neu*100) %>% 
+                      Cor_CpG(.,Z = "Neutrophils (%)")
+NK_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$NK) %>%
+                     select(refage,NK,sex) %>%
+                     mutate(cell = NK*100) %>% 
+                     Cor_CpG(.,Z = "Natural killer cells (%)")
+Treg_age <- NMIBC2 %>% boxplot_outlier_remove(.,NMIBC2$Treg) %>%
+                       select(refage,Treg,sex) %>%
+                       mutate(cell = Treg*100) %>% 
+                       Cor_CpG(.,Z = "CD4(+) T regulatory cells (%)")
+
+# save
+Row1 = plot_grid(Bas_age,Eos_age, ncol = 2)
+Row2 = plot_grid(Bmem_age, Bnv_age, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex_outliersRemove1.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+Row3 = plot_grid(CD4mem_age, CD4nv_age, ncol = 2)
+Row4 = plot_grid(CD8mem_age, CD8nv_age, ncol = 2)
+Comb_Plot2 = plot_grid(Row3, Row4,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex_outliersRemove2.pdf"), plot = Comb_Plot2, height = 9, width = 7.5)
+Row5 = plot_grid(Mono_age, Neu_age, ncol = 2)
+Row6 = plot_grid(NK_age, Treg_age, ncol = 2)
+Comb_Plot3 = plot_grid(Row5, Row6,  ncol = 1, rel_heights = c(1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/Age_bySex_outliersRemove3.pdf"), plot = Comb_Plot3, height = 9, width = 7.5)
+```
+
+___________________
+
+# Survival time vs cell type proportion
+```{r}
+NMIBC6 <- NMIBC %>%
+          select(Sample_Name,survreftmd) %>%
+          left_join(Cell_Type_Est)
+
+Bas_surv <- NMIBC6 %>% select(survreftmd,Bas) %>%
+                       mutate(cell = Bas*100) %>% 
+                       Cor_CpG(.,Z = "Basophils (%)")
+Eos_surv <- NMIBC6 %>% select(survreftmd,Eos) %>%
+                       mutate(cell = Eos*100) %>% 
+                       Cor_CpG(.,Z = "Eosinophils (%)")
+Bmem_surv <- NMIBC6 %>% select(survreftmd,Bmem) %>%
+                        mutate(cell = Bmem*100) %>% 
+                        Cor_CpG(.,Z = "B-cells memory (%)")
+Bnv_surv <- NMIBC6 %>% select(survreftmd,Bnv) %>%
+                       mutate(cell = Bnv*100) %>% 
+                       Cor_CpG(.,Z = "B-cells naïve (%)")
+CD4mem_surv <- NMIBC6 %>% select(survreftmd,CD4mem) %>%
+                          mutate(cell = CD4mem*100) %>% 
+                          Cor_CpG(.,Z = "Helper CD4(+) T-cells memory (%)")
+CD4nv_surv <- NMIBC6 %>% select(survreftmd,CD4nv) %>%
+                         mutate(cell = CD4nv*100) %>% 
+                         Cor_CpG(.,Z = "Helper CD4(+) T-cells naïve (%)")
+# save
+Row1 = plot_grid(Bas_surv,Eos_surv, ncol = 2)
+Row2 = plot_grid(Bmem_surv, Bnv_surv, ncol = 2)
+Row3 = plot_grid(CD4mem_surv, CD4nv_surv, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/SurvTime1.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+CD8mem_surv <- NMIBC6 %>% select(survreftmd,CD8mem) %>%
+                          mutate(cell = CD8mem*100) %>% 
+                          Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells memory (%)")
+CD8nv_surv <- NMIBC6 %>% select(survreftmd,CD8nv) %>%
+                         mutate(cell = CD8nv*100) %>% 
+                         Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells naïve (%)")
+Mono_surv <- NMIBC6 %>% select(survreftmd,Mono) %>%
+                        mutate(cell = Mono*100) %>% 
+                        Cor_CpG(.,Z = "Monocytes (%)")
+Neu_surv <- NMIBC6 %>% select(survreftmd,Neu) %>%
+                       mutate(cell = Neu*100) %>% 
+                       Cor_CpG(.,Z = "Neutrophils (%)")
+NK_surv <- NMIBC6 %>% select(survreftmd,NK) %>%
+                      mutate(cell = NK*100) %>% 
+                      Cor_CpG(.,Z = "Natural killer cells (%)")
+Treg_surv <- NMIBC6 %>% select(survreftmd,Treg) %>%
+                        mutate(cell = Treg*100) %>% 
+                        Cor_CpG(.,Z = "CD4(+) T regulatory cells (%)")
+# save
+Row1 = plot_grid(CD8mem_surv,CD8nv_surv, ncol = 2)
+Row2 = plot_grid(Mono_surv, Neu_surv, ncol = 2)
+Row3 = plot_grid(NK_surv, Treg_surv, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/SurvTime2.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+
+# recurrence time vs cell type proportion
+```{r}
+NMIBC5 <- NMIBC %>%
+          select(Sample_Name,recsurgtmd,RecurYN) %>%
+          left_join(Cell_Type_Est) %>%
+          filter(is.na(RecurYN)==F) %>% # 488 patients
+          mutate(Bas = Bas*100, Eos = Eos*100, 
+                 Bmem = Bmem*100, Bnv = Bnv*100, 
+                 CD4mem = CD4mem*100, CD4nv = CD4nv*100,
+                 Mono = Mono*100, Neu = Neu*100, 
+                 NK = NK*100, Treg = Treg*100, 
+                 CD8mem = CD8mem*100, CD8nv = CD8nv*100)
+
+Bas_Rec <- NMIBC5 %>% select(recsurgtmd,Bas) %>%
+                      mutate(cell = Bas) %>% 
+                      Cor_CpG(.,Z = "Basophils (%)")
+Eos_Rec <- NMIBC5 %>% select(recsurgtmd,Eos) %>%
+                      mutate(cell = Eos) %>% 
+                      Cor_CpG(.,Z = "Eosinophils (%)")
+Bmem_Rec <- NMIBC5 %>% select(recsurgtmd,Bmem) %>%
+                       mutate(cell = Bmem) %>% 
+                       Cor_CpG(.,Z = "B-cells memory (%)")
+Bnv_Rec <- NMIBC5 %>% select(recsurgtmd,Bnv) %>%
+                      mutate(cell = Bnv) %>% 
+                      Cor_CpG(.,Z = "B-cells naïve (%)")
+CD4mem_Rec <- NMIBC5 %>% select(recsurgtmd,CD4mem) %>%
+                         mutate(cell = CD4mem) %>% 
+                         Cor_CpG(.,Z = "Helper CD4(+) T-cells memory (%)")
+CD4nv_Rec <- NMIBC5 %>% select(recsurgtmd,CD4nv) %>%
+                        mutate(cell = CD4nv) %>% 
+                        Cor_CpG(.,Z = "Helper CD4(+) T-cells naïve (%)")
+# save
+Row1 = plot_grid(Bas_Rec,Eos_Rec, ncol = 2)
+Row2 = plot_grid(Bmem_Rec, Bnv_Rec, ncol = 2)
+Row3 = plot_grid(CD4mem_Rec, CD4nv_Rec, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/RecTime1.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+
+CD8mem_Rec <- NMIBC5 %>% select(recsurgtmd,CD8mem) %>%
+                         mutate(cell = CD8mem) %>% 
+                         Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells memory (%)")
+CD8nv_Rec <- NMIBC5 %>% select(recsurgtmd,CD8nv) %>%
+                        mutate(cell = CD8nv) %>% 
+                        Cor_CpG(.,Z = "Cytotoxic CD8(+) T-cells naïve (%)")
+Mono_Rec <- NMIBC5 %>% select(recsurgtmd,Mono) %>%
+                       mutate(cell = Mono) %>% 
+                       Cor_CpG(.,Z = "Monocytes (%)")
+Neu_Rec <- NMIBC5 %>% select(recsurgtmd,Neu) %>%
+                      mutate(cell = Neu) %>% 
+                      Cor_CpG(.,Z = "Neutrophils (%)")
+NK_Rec <- NMIBC5 %>% select(recsurgtmd,NK) %>%
+                      mutate(cell = NK) %>% 
+                      Cor_CpG(.,Z = "Natural killer cells (%)")
+Treg_Rec <- NMIBC5 %>% select(recsurgtmd,Treg) %>%
+                      mutate(cell = Treg) %>% 
+                      Cor_CpG(.,Z = "CD4(+) T regulatory cells (%)")
+# save
+Row1 = plot_grid(CD8mem_Rec,CD8nv_Rec, ncol = 2)
+Row2 = plot_grid(Mono_Rec, Neu_Rec, ncol = 2)
+Row3 = plot_grid(NK_Rec, Treg_Rec, ncol = 2)
+Comb_Plot = plot_grid(Row1, Row2, Row3, ncol = 1, rel_heights = c(1,1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Plot/RecTime2.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+

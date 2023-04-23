@@ -1,0 +1,149 @@
+---
+title: "Extended deconvolution"
+author: "Ji-Qing Chen"
+date: "5/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ENmix)
+library(minfi)
+'%!in%' <- Negate('%in%')
+library(FlowSorted.BloodExtended.EPIC)
+source("/Users/chenjiqing/Public/2018 Summer term/PD/Code/Panic_Dis/Scripts/Functions/meffil_cell_type_specific_methyl_function.R")
+```
+
+## Load sample beta
+```{r}
+beta <- readRDS("/Users/chenjiqing/Public/bladder cancer/Imputation/Imputed Betas/beta_BMIQ_m.rds")
+beta.imp <- beta$data
+rm(beta)
+```
+
+## Get Reference Library
+```{r message=FALSE, warning=FALSE}
+# Reference Data
+        library(ExperimentHub)
+        hub <- ExperimentHub()
+        query(hub, "FlowSorted.BloodExtended.EPIC")
+        FlowSorted.BloodExtended.EPIC <- hub[["EH5425"]]
+```
+
+## Get Cell Specific RGSet
+```{r}
+# Define Cell Types
+        cellTypes = c("Bas", "Bmem", "Bnv", "CD4mem", "CD4nv", "CD8mem", "CD8nv", "Eos", "Mono", "Neu", "NK", "Treg")
+# Isolate Specific Cell Type Samples
+        Ref_Cell_RGsetTargets = FlowSorted.BloodExtended.EPIC[ , FlowSorted.BloodExtended.EPIC$CellType %in% cellTypes]
+# Rename Samples
+        sampleNames(Ref_Cell_RGsetTargets) <- paste(Ref_Cell_RGsetTargets$CellType, seq_len(dim(Ref_Cell_RGsetTargets)[2]), sep = "_")
+```
+
+## Do Quantile Normalization
+```{r}
+#Ref_Methylset <- preprocessRaw(Ref_Cell_RGsetTargets)
+Ref_QN <- preprocessQuantile(Ref_Cell_RGsetTargets)
+Ref_QN <- Ref_QN[rownames(Ref_QN) %in% rownames(beta.imp), ] # Only 833178 CpGs are selected; however bladder beta data contain 833378 CpGs. 0.02% loss.
+```
+
+## Get Normalized Refernce Betas
+```{r}
+# Get beta
+        Ref_QN_beta <- minfi::getBeta(Ref_QN) # should use this function from minfi, not ENmix
+        class(Ref_QN_beta)
+        
+# Check Column Names        
+        colnames(Ref_QN_beta)
+```
+
+# Save
+```{r}
+save(Ref_QN_beta, file = "/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/ExtDec_ReferLibrary_QN_Betas.RData")
+
+rm(FlowSorted.BloodExtended.EPIC, Ref_Cell_RGsetTargets, Ref_QN)
+```
+
+# Get Probe Beta Values
+```{r}
+# Get Cell Type Column Names Standardized
+        colnames(Ref_QN_beta) <- str_remove_all(colnames(Ref_QN_beta), "_.*")
+
+# Get Ref Betas For "Important" Probes
+        Ref_betas_selected <- meffil.cell.type.specific.methylation(beta = Ref_QN_beta, cell.types = colnames(Ref_QN_beta), number.sites = 250)
+        
+        # Check
+        nrow(Ref_betas_selected)
+        length(unique(rownames(Ref_betas_selected)))
+                # 3461 Total Unique CpGs Were Selected... 250*12 = 3000
+        
+        # Convert To DF
+        Ref_betas_selected_df = data.frame(Ref_betas_selected) %>%
+                rownames_to_column(var = "CpG")
+
+        
+        # Ensure that all the probes are in the sample
+        nrow(Ref_betas_selected) == sum(rownames(Ref_betas_selected) %in% rownames(beta.imp))
+        
+```
+
+# cell proportion Function
+```{r}
+projectCellType2 <- function(Y, coefCellType, contrastCellType=NULL, 
+                    nonnegative=TRUE, lessThanOne=F){ 
+    if(is.null(contrastCellType))
+        Xmat <- coefCellType
+    else
+        Xmat <- tcrossprod(coefCellType, contrastCellType) 
+    nCol <- dim(Xmat)[2]
+    if(nCol == 2) {
+        Dmat <- crossprod(Xmat)
+        mixCoef <- t(apply(Y, 2, function(x) {solve(Dmat, crossprod(Xmat, x))}))
+        colnames(mixCoef) <- colnames(Xmat)
+        return(mixCoef)
+    } else {
+        nSubj <- dim(Y)[2]
+        mixCoef <- matrix(0, nSubj, nCol)
+        rownames(mixCoef) <- colnames(Y)
+        colnames(mixCoef) <- colnames(Xmat)
+        if(nonnegative){
+            if(lessThanOne) {
+                Amat <- cbind(rep(-1, nCol), diag(nCol))
+                b0vec <- c(-1, rep(0, nCol))
+            } else {
+                Amat <- diag(nCol)
+                b0vec <- rep(0, nCol)
+            }
+            for(i in seq_len(nSubj)) {
+                obs <- which(!is.na(Y[,i])) 
+                Dmat <- crossprod(Xmat[obs,])
+                mixCoef[i,] <- solve.QP(Dmat, crossprod(Xmat[obs,], Y[obs,i]), 
+                                        Amat, b0vec)$sol
+            }
+        } else {
+            for(i in seq_len(nSubj)) {
+                obs <- which(!is.na(Y[,i])) 
+                Dmat <- crossprod(Xmat[obs,])
+                mixCoef[i,] <- solve(Dmat, t(Xmat[obs,]) %*% Y[obs,i])
+            }
+        }
+        return(mixCoef)
+    }
+}
+```
+
+# Get Cell Type Proportion
+```{r}
+Cell_Type_Est <- projectCellType2(beta.imp[rownames(Ref_betas_selected), ], Ref_betas_selected)
+
+# Quick Visual Check
+        boxplot(Cell_Type_Est)
+        
+# Convert To Data Frame
+        Cell_Type_Est = as.data.frame(Cell_Type_Est) %>%
+                rownames_to_column(var = "Sample_Name")
+# save
+save(Cell_Type_Est, file = "/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+```
