@@ -1,0 +1,535 @@
+---
+title: "partDSA_acc"
+author: "Ji-Qing Chen"
+date: "10/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MST)
+library(dplyr)
+library(tidyverse)
+library(survival)
+library(survminer)
+library(partDSA)
+
+library(ggsci)
+library(cowplot)
+```
+
+# load data
+```{r}
+# Pheno
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_3FoldCross_pheno_acc.RData") # immune cell already winsorized
+
+# Hannum
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData") # immune cell already winsorized
+```
+
+# imm + clinical features (OS)
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer_imm<-subset(BLCR_classed_cellprop, select =c(Age, pheno_acc, Sex, Tumor_grade, Smoking_status, BCG,CD4mem,CD8mem,CD8nv,Neu,NK))
+OSTime = BLCR_classed_cellprop$TenYearSurv
+OScen = BLCR_classed_cellprop$TenDead
+model.IPCW_imm = partDSA(x=xinfer_imm, y=Surv(log(OSTime),OScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW_imm
+showDSA(model.IPCW_imm)
+
+#Best 3 partitions
+ # Partition 1 [of 3]:
+  #  (CD8nv <= 1.760000) && (Neu <= 76.460000)
+  #Partition 2 [of 3]:
+   # (76.460000 < Neu)
+  #Partition 3 [of 3]:
+   # (1.760000 < CD8nv) && (Neu <= 76.460000)
+
+GroupOS <- BLCR_classed_cellprop %>% 
+           mutate(Group = ifelse(Neu > 76.46, "Group 2", 
+                          ifelse((Neu <= 76.46) & (CD8nv <= 1.76),"Group 1","Group 3")))
+table(GroupOS$Group)
+table(GroupOS$Class, GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival, %",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3"),
+  risk.table = TRUE, # For JAMA
+  palette = c("#374E55FF", "#DF8F44FF" ,"#00A1D5FF"),
+  #palette = "nejm",
+  #conf.int = T,
+  #surv.median.line = "hv"
+  risk.table.y.text.col=F, # For JAMA
+  risk.table.title="No. at risk", # For JAMA
+  risk.table.height = 0.20
+  )
+
+# Adjust y scale and table for JAMA
+OS_10y$plot <- OS_10y$plot +
+               scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+               theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                     legend.position=c(0.08, 0.2),
+                     legend.background = element_rect(linetype="solid", colour ="black"),
+                     legend.title = element_blank(),
+                     legend.text = element_text(size = 8),
+                     axis.title.y = element_text(vjust = -8))
+OS_10y$table <- OS_10y$table + 
+                theme_cleantable() +
+                theme(plot.title = element_text(hjust = -0.133,size=11))
+
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+GroupOS2 <- GroupOS %>% filter(Group == "Group 1" | Group == "Group 2")
+surv_diff2 <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS2)
+pchisq(surv_diff2$chisq, length(surv_diff2$n)-1, lower.tail = FALSE)
+GroupOS3 <- GroupOS %>% filter(Group == "Group 1" | Group == "Group 3")
+surv_diff3 <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS3)
+pchisq(surv_diff3$chisq, length(surv_diff3$n)-1, lower.tail = FALSE)
+
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ Group, data=GroupOS))
+OS_10y$plot <- OS_10y$plot + 
+          #annotate("text", x = 66, y = 0, label = 61.67) +
+          annotate("text", x = 43, y = 0.3, label = "Group 2 (referent group: Group 1), P = 6.27E-10; \n HR = 4.93 (95% CI, = 2.78-8.71)",size = 3) +
+          annotate("text", x = 43, y = 0.1, label = "Group 3 (referent group: Group 1), P = 0.006; \n HR = 0.54 (95% CI, = 0.35-0.85)",size = 3) +
+          theme(plot.title = element_text(size = 2))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+Cox_G2 = coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Class + Group, data = GroupOS)
+Cox_G3 = coxph(Surv(TenYearSurv, TenDead) ~ Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Class + Group + Bnv + CD4mem + CD8mem + NK + CD4nv + Neu, data = GroupOS)
+
+library(rms)
+vif(Cox_G3)
+summary(Cox_G1)
+summary(Cox_G2)
+cox.zph(Cox_G1)
+```
+
+# partDSA vs SS-RPMM class membership
+```{r}
+# A
+table(GroupOS$Class, GroupOS$Group)
+GroupOS2 <- GroupOS %>% mutate(group_class = ifelse(Group=='Group 1' & Class =='rL','G1_rL',
+                                                    ifelse(Group=='Group 1' & Class =='rR','G1_rR',
+                                                           ifelse(Group=='Group 2','G2',
+                                                                  ifelse(Group=='Group 3' & Class =='rL','G3_rL','G3_rR')))))
+table(GroupOS2$group_class)
+
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS2)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival, %",
+  #ylim = c(0.4,1),
+  legend = "top" ,legend.title = "", 
+  legend.labs = c('G1_rL', 'G1_rR', 'G2', 'G3_rL', 'G3_rR'),
+  #risk.table = TRUE, # For JAMA
+  linetype =c(4,1,1,4,1),
+  palette = c("#374E55FF","#374E55FF","#DF8F44FF","#00A1D5FF","#00A1D5FF"),
+  #conf.int = T,
+  #surv.median.line = "hv"
+  #risk.table.y.text.col=F, # For JAMA
+  #risk.table.title="No. at risk", # For JAMA
+  #risk.table.height = 0.30
+  )
+
+# Adjust y scale and table for JAMA
+OS_10y$plot <- OS_10y$plot +
+               scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+               theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                     legend.position=c(0.08, 0.2),
+                     legend.background = element_rect(linetype="solid", colour ="black"),
+                     legend.title = element_blank(),
+                     legend.text = element_text(size = 8),
+                     axis.title.y = element_text(vjust = 0))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 43, y = 0.3, label = "G1_rR (referent group: G1_rL), P = 1.54E-8; \n HR = 0.36 (95% CI, = 0.25-0.52)",size = 3.5) +
+          annotate("text", x = 43, y = 0.1, label = "G3_rR (referent group: G3_rL), P = 0.006; \n HR = 0.33 (95% CI, = 0.15-0.76)",size = 3.5) +
+          theme(plot.title = element_text(size = 2))
+
+OS_10y$table <- OS_10y$table + 
+                theme_cleantable() +
+                theme(plot.title = element_text(hjust = -0.133,size=11))
+
+surv_median(fit_10y)
+
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 55, y = 0, label = 61.67) +
+          annotate("text", x = 83, y = 0, label = 76.48) +
+          annotate("text", x = 10, y = 0.3, label = "G1_rR \n (referent group: G1_rL) \n HR = 0.41 \n C.I. = 0.30 - 0.58 \n P = 6.01E-8", size = 3) +
+          annotate("text", x = 37, y = 0.3, label = "G3_rR \n (referent group: G3_rL) \n HR = 0.14 \n C.I. = 0.06 - 0.33 \n P = 1.19E-7", size = 3) +
+          theme(plot.title = element_text(size = 10))
+
+GroupOS3 <- GroupOS2 %>% filter(group_class == "G1_rL" | group_class == "G1_rR")
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ group_class, data=GroupOS3))
+surv_diff2 <- survdiff(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS3)
+pchisq(surv_diff2$chisq, length(surv_diff2$n)-1, lower.tail = FALSE)
+
+GroupOS4 <- GroupOS2 %>% filter(group_class == "G3_rL" | group_class == "G3_rR")
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ group_class, data=GroupOS4))
+surv_diff2 <- survdiff(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS4)
+pchisq(surv_diff2$chisq, length(surv_diff2$n)-1, lower.tail = FALSE)
+
+# B
+table(GroupOS$Class, GroupOS$Group)
+GroupOS2 <- GroupOS %>% mutate(group_class = ifelse(Group=='Group 1' & Class =='rL','G1_rL',
+                                                    ifelse(Group=='Group 1' & Class =='rR','G1_rR',
+                                                           ifelse(Group=='Group 2','G2','G3'))))
+table(GroupOS2$group_class)
+
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS2)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c('G1_rL', 'G1_rR', 'G2', 'G3'),
+  linetype =c(4,1,1,1),
+  palette = c("#bc3c29","#bc3c29","#0072b5","#e18727"),
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ group_class, data=GroupOS2))
+GroupOS3 <- GroupOS2 %>% filter(group_class == "G1_rL" | group_class == "G2")
+surv_diff2 <- survdiff(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS3)
+pchisq(surv_diff2$chisq, length(surv_diff2$n)-1, lower.tail = FALSE)
+
+GroupOS4 <- GroupOS2 %>% filter(group_class == "G1_rL" | group_class == "G3")
+surv_diff2 <- survdiff(Surv(TenYearSurv, TenDead) ~ group_class, data = GroupOS4)
+pchisq(surv_diff2$chisq, length(surv_diff2$n)-1, lower.tail = FALSE)
+
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 110, y = 0, label = 115.98) +
+          annotate("text", x = 20, y = 0.3, label = "G2 (referent group: G1_rL) \n HR = 4.38 \n C.I. = 2.38 - 8.07 \n P = 3.67E-7") +
+          annotate("text", x = 70, y = 0.3, label = "G3 (referent group: G1_rL) \n HR = 0.97 \n C.I. = 0.51 - 1.84 \n P = 0.92") +
+          theme(plot.title = element_text(size = 10))
+```
+
+# 0 - 60 month for group 1 and 3
+```{r}
+library(tidyverse)
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean2.RData")
+rm(Recu,phenotype1)
+phenotype2 <- phenotype2 %>%
+              select(Sample_Name, fiveDead, fiveYearSurv) %>%
+              `colnames<-`(c('Sample_ID','fiveDead','fiveYearSurv'))
+
+GroupOS2 <- GroupOS %>%
+            filter(Group == "Group 1" | Group == "Group 3") %>%
+            rownames_to_column(var = 'Sample_ID') %>%
+            left_join(phenotype2)
+
+fit_5y = survfit(Surv(fiveYearSurv, fiveDead) ~ Group, data = GroupOS2)
+OS_5y <- ggsurvplot(
+  fit_5y,
+  xlab = "Months", 
+  ylab = "5-year overall survival, %",
+  #ylim = c(0.80,1),
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 3"),
+  risk.table = TRUE, # For JAMA
+  palette = c("#374E55FF", "#00A1D5FF"),
+  #conf.int = T, # Not for JAMA
+  #surv.median.line = "hv" # Not for JAMA
+  risk.table.y.text.col=F, # For JAMA
+  risk.table.title="No. at risk", # For JAMA
+  risk.table.height = 0.18
+  )
+
+# Adjust y scale and table for JAMA
+OS_5y$plot <- OS_5y$plot +
+              scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+              theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                    legend.position=c(0.1, 0.2),
+                    legend.background = element_rect(linetype="solid", colour ="black"),
+                    legend.title = element_blank(),
+                    axis.title.y = element_text(vjust = -8))
+OS_5y$table <- OS_5y$table + 
+               theme_cleantable() +
+               theme(plot.title = element_text(hjust = -0.133,size=11))
+
+surv_median(fit_5y)
+surv_diff <- survdiff(Surv(fiveYearSurv, fiveDead) ~ Group, data = GroupOS2)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE)
+summary(os <- coxph(Surv(fiveYearSurv, fiveDead) ~ Group, data=GroupOS2))
+
+OS_5y$plot <- OS_5y$plot + 
+          annotate("text", x = 15, y = 0.5, label = "Group 3 (referent group: Group 1), P = 0.61; \n HR = 0.85 (95% CI, 0.47-1.57)") +
+          theme(plot.title = element_text(size = 5))
+# Size 5x8 inch
+```
+
+# 61 month - 120 month for group 1 and 3
+```{r}
+GroupOS_2 <- GroupOS %>%
+             filter(Group == "Group 1" | Group == "Group 3") %>%
+             filter(TenYearSurv > 60)
+table(GroupOS_2$Class, GroupOS_2$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS_2)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival, %",
+  xlim = c(60,121),
+  #ylim = c(0.7,1),
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 3"),
+  risk.table = TRUE, # For JAMA
+  palette = c("#374E55FF", "#00A1D5FF"),
+  #conf.int = T, # Not for JAMA
+  #surv.median.line = "hv" # Not for JAMA
+  risk.table.y.text.col=F, # For JAMA
+  risk.table.title="No. at risk", # For JAMA
+  risk.table.height = 0.18
+  )
+
+# Adjust y scale and table for JAMA
+OS_10y$plot <- OS_10y$plot +
+               scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+               theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                     legend.position=c(0.1, 0.2),
+                     legend.background = element_rect(linetype="solid", colour ="black"),
+                     legend.title = element_blank(),
+                     axis.title.y = element_text(vjust = -8))
+OS_10y$table <- OS_10y$table + 
+                theme_cleantable() +
+                theme(plot.title = element_text(hjust = -0.133,size=11))
+
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS_2)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ Group, data=GroupOS_2))
+
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 75, y = 0.5, label = "Group 3 (referent group: Group 1),  P = 0.002; \n HR = 0.37 (95% CI, = 0.19-0.71)") +
+          theme(plot.title = element_text(size = 5))
+# Size 5x8 inch
+
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS_2)
+library(rms)
+vif(Cox_G1)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# immune cell type proportion difference
+```{r}
+# cell proportion without winsorization
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion2.RData")
+
+NMIBC_immune <- GroupOS %>% 
+                rownames_to_column(., var = 'Sample_Name') %>% 
+                select(Sample_Name, Group) %>%
+                left_join(Extended2) %>%
+                mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                       Lymph = Bmem + Bnv + NK + T_cell) %>%
+                mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph)) %>%
+                select(-T_cell,-Lymph)
+```
+
+# Function
+```{r}
+# Plot Cell Type
+Plot_Cell_Type <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      #color = Group,
+                                      fill = Group, # For JAMA
+                                      by = Group)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, # For JAMA
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1) + # For JAMA
+                      #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                       #                                          jitter.width = 0.25), 
+                        #         alpha=0.5,size = 0.1) +
+                      stat_compare_means(aes(group = Group), 
+                                         label = "p.format", 
+                                         label.x = P_X, label.y = P_Y, 
+                                         size = 3.4, 
+                                         method = "anova") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "bottom", # legend.position controls where is legend
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            legend.title = element_blank(), # For JAMA
+                            text=element_text(size=12, 
+                                              face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt")) + 
+                     scale_y_continuous(labels = scales::percent_format(accuracy = 1)) 
+                return(PLOT)
+}
+
+NeuPlot <- function(DF){
+            ggplot(DF, aes(x = "Neu",
+                           y = Neu,
+                           #color = Group,
+                           fill = Group,
+                           by = Group)) +
+            stat_boxplot(geom = "errorbar", width = 0.2,
+                         position = position_dodge(width = 0.95)) + # For JAMA
+            geom_boxplot(position = position_dodge(width = 0.95), 
+                         outlier.shape = 1, # For JAMA
+                         # outlier.colour = NA, 
+                         outlier.size = 1.5) + # For JAMA
+            #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+             #                                          jitter.width = 0.25),
+              #         alpha=0.5,size = 0.1) + 
+            stat_compare_means(aes(group = Group), 
+                               label = "p.format", 
+                               label.x = 0, label.y = 1, 
+                               size = 3.4, 
+                               method = "anova") +
+            labs(x = "", y = "Cell Type Percent") +
+            theme_classic() +
+            #scale_color_nejm() +
+            scale_fill_jama() +
+            theme(legend.position = "none", # legend.position controls where is legend
+                  panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                  text=element_text(size=12,face = "bold"),
+                  plot.margin = unit(c(6,0,6,0), "pt")) +
+            scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+}
+
+# Plot Cell Type
+Cell_Ratio_Plot <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = "NLR", 
+                                      y = NLR,
+                                      #color = Group,
+                                      fill = Group,
+                                      by = Group)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, 
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.5) +
+                       #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                        #                               jitter.width = 0.25),
+                         #        alpha=0.5,size = 0.1) +
+                       stat_compare_means(aes(group = Group), 
+                                          label = "p.format", 
+                                          label.x = P_X, 
+                                          label.y = P_Y, 
+                                          size = 3.4, 
+                                          method = "anova") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "none",
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            text=element_text(size=12, face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt"), 
+                            axis.text.x = element_text(size = 7))
+                return(PLOT)
+                
+        }
+```
+
+# plot
+```{r}
+Estimate <- NMIBC_immune %>%
+            dplyr::select(Group, Bas, Bmem, Bnv, Eos, Mono, NK, Treg) %>%
+            gather(key = Cell_Type, value = Percentage, -Group) %>%
+            mutate(Percentage = Percentage/100)
+plot1 = Plot_Cell_Type(Estimate, YLab = "Cell Type Percent", P_X = 0, P_Y = .21)
+
+Estimate2 <- NMIBC_immune %>%
+             dplyr::select(Group, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+             gather(key = Cell_Type, value = Percentage, -Group) %>%
+             mutate(Percentage = Percentage/100)
+plot2 = Plot_Cell_Type(Estimate2, YLab = "Cell Type Percent", P_X = 0, P_Y = .4)
+
+PlotNeu <- NMIBC_immune %>% mutate(Neu = Neu/100) %>% NeuPlot()
+
+Ratios <- NMIBC_immune %>%
+          dplyr::select(Group, NLR)
+PlotNLR <- Cell_Ratio_Plot(Ratios,YLab = 'Ratio', P_X = 2, P_Y = 33)
+
+# save
+Row1 = plot_grid(plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, plot2, PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Survival tree/plots/NMIBC_summary proportion_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# age and age acceleration
+```{r}
+NMIBC_age <- GroupOS %>% 
+             select(Age, PhenoAge, mAge_Hannum, pheno_acc, hannum_acc, Group) %>%
+             `colnames<-`(c('Age','Pheno_mAge', 'Hannum_mAge', 'Pheno_Age_Acceleration', 'Hannum_Age_Acceleration', 'Group'))
+```
+
+# Function
+```{r}
+# Plot Cell Type
+Plot_Age_Type <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Ages, 
+                                      y = Values,
+                                      #color = Group,
+                                      fill = Group,
+                                      by = Group)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, # For JAMA
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.3) + # For JAMA
+                      #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                       #                                          jitter.width = 0.25), 
+                        #         alpha=0.5,size = 0.1) +
+                      stat_compare_means(aes(group = Group), 
+                                         label = "p.format", 
+                                         label.x = P_X, label.y = P_Y, 
+                                         size = 3.4, 
+                                         method = "anova") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "bottom", # legend.position controls where is legend
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            legend.title = element_blank(), # For JAMA
+                            text=element_text(size=12, 
+                                              face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt"))
+                return(PLOT)
+}
+
+```
+
+# plot
+```{r}
+Estimate <- NMIBC_age %>%
+            dplyr::select(Group, Age, Pheno_mAge, Hannum_mAge) %>%
+            gather(key = Ages, value = Values, -Group) 
+plot1 = Plot_Age_Type(Estimate, YLab = "Years", P_X = 0, P_Y = 97)
+
+Estimate2 <- NMIBC_age %>%
+            dplyr::select(Group, Pheno_Age_Acceleration, Hannum_Age_Acceleration) %>%
+            gather(key = Ages, value = Values, -Group) 
+plot2 = Plot_Age_Type(Estimate2, YLab = "Years", P_X = 0, P_Y = 24)
+
+# save
+Comb_Plot = plot_grid(plot1, plot2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Survival tree/plots/NMIBC_age_and_mage_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```

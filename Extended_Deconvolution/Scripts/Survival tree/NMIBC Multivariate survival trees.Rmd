@@ -1,0 +1,393 @@
+---
+title: "Multivariate survival trees"
+author: "Ji-Qing Chen"
+date: "11/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MST)
+library(dplyr)
+library(survival)
+library(survminer)
+library(partDSA)
+```
+
+# Load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean2.RData")
+rm(phenotype1,Recu)
+```
+
+# clean data
+```{r}
+# weird data
+weird = phenotype2[which(phenotype2$ddstat=="dead" & phenotype2$RecurYN=="yes" &
+                         phenotype2$survreftmd<phenotype2$recsurgtmd),]
+# remove weird data
+phenotype3 <- phenotype2 %>%
+          filter(muscinv == "no") %>%
+          mutate(Age = refage, Sex = sex, `Tumor grade` = grade2, 
+                         `Smoking status` = smkstat2, BCG = ImmunoTx) %>%
+          dplyr::select(Sample_Name,Age,Sex,`Tumor grade`,`Smoking status`,
+                        BCG,TenYearRFS, TenRFS, TenDead, TenYearSurv) %>%
+          filter(Sample_Name != weird$Sample_Name) %>%
+          left_join(Extended2) %>%
+          mutate(CD4 = CD4mem + CD4nv + Treg,
+                 CD8 = CD8mem + CD8nv,
+                 Bcell = Bmem + Bnv) %>%
+          mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                 Lymph = Bmem + Bnv + NK + T_cell,
+                 Nv = Bnv + CD8nv + CD4nv) %>%
+          mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph),
+                 LM_ratio = ifelse(Mono == 0,Lymph/0.01, Lymph/Mono),
+                 Bnv_pct= ifelse(Bcell == 0,(Bnv/0.01)*100, (Bnv/Bcell)*100),
+                 CD4_to_8 = ifelse(CD8 == 0,CD4/0.01, CD4/CD8),
+                 CD4_nv_pct = ifelse(CD4 == 0, (CD4nv/0.01)*100, (CD4nv/CD4)*100),
+                 CD4nv_to_mem = ifelse(CD4mem == 0,CD4nv/0.01, CD4nv/CD4mem),
+                 CD8_nv_pct = ifelse(CD8 == 0, (CD8nv/0.01)*100, (CD8nv/CD8)*100),
+                 CD8nv_to_mem = ifelse(CD8mem == 0,CD8nv/0.01, CD8nv/CD8mem),
+                 CD8mem_Treg = ifelse(Treg == 0,CD8mem/0.01, CD8mem/Treg),
+                 Treg_pct = ifelse(CD4 == 0, (Treg/0.01)*100, (Treg/CD4)*100),
+                 Nv_Lymph = ifelse(Lymph == 0,Nv/0.01,Nv/Lymph))
+# Winsorization
+phenotype3_win <- phenotype3 %>%
+         mutate(Bas = ifelse(Bas <= quantile(phenotype3$Bas, probs = 0.98),
+                             Bas,quantile(phenotype3$Bas, probs = 0.98)),
+                Bmem = ifelse(Bmem <= quantile(phenotype3$Bmem, probs = 0.98),
+                              Bmem,quantile(phenotype3$Bmem, probs = 0.98)),
+                Bnv = ifelse(Bnv <= quantile(phenotype3$Bnv, probs = 0.98),
+                             Bnv,quantile(phenotype3$Bnv, probs = 0.98)),
+                CD4mem = ifelse(CD4mem <= quantile(phenotype3$CD4mem, probs = 0.98),
+                                CD4mem,quantile(phenotype3$CD4mem, probs = 0.98)),
+                CD4nv = ifelse(CD4nv <= quantile(phenotype3$CD4nv, probs = 0.98),
+                               CD4nv,quantile(phenotype3$CD4nv, probs = 0.98)),
+                CD8mem = ifelse(CD8mem <= quantile(phenotype3$CD8mem, probs = 0.98),
+                                CD8mem,quantile(phenotype3$CD8mem, probs = 0.98)),
+                CD8nv = ifelse(CD8nv <= quantile(phenotype3$CD8nv, probs = 0.98),
+                               CD8nv,quantile(phenotype3$CD8nv, probs = 0.98)),
+                Eos = ifelse(Eos <= quantile(phenotype3$Eos, probs = 0.98),
+                             Eos,quantile(phenotype3$Eos, probs = 0.98)),
+                Mono = ifelse(Mono <= quantile(phenotype3$Mono, probs = 0.98),
+                              Mono,quantile(phenotype3$Mono, probs = 0.98)),
+                Neu = ifelse(Neu <= quantile(phenotype3$Neu, probs = 0.02),
+                             quantile(phenotype3$Neu, probs = 0.02),Neu),
+                NK = ifelse(NK <= quantile(phenotype3$NK, probs = 0.98),
+                            NK,quantile(phenotype3$NK, probs = 0.98)),
+                Treg = ifelse(Treg <= quantile(phenotype3$Treg, probs = 0.98),
+                              Treg,quantile(phenotype3$Treg, probs = 0.98))) %>%
+         mutate(CD4 = ifelse(CD4 <= quantile(phenotype3$CD4, probs = 0.98),
+                             CD4,quantile(phenotype3$CD4, probs = 0.98)),
+                CD8 = ifelse(CD8 <= quantile(phenotype3$CD8, probs = 0.98),
+                             CD8,quantile(phenotype3$CD8, probs = 0.98)),
+                Bcell = ifelse(Bcell <= quantile(phenotype3$Bcell, probs = 0.98),
+                               Bcell,quantile(phenotype3$Bcell, probs = 0.98)),
+                Lymph = ifelse(Lymph <= quantile(phenotype3$Lymph, probs = 0.98),
+                               Lymph,quantile(phenotype3$Lymph, probs = 0.98)),
+                Nv = ifelse(Nv <= quantile(phenotype3$Nv, probs = 0.98),
+                            Nv,quantile(phenotype3$Nv, probs = 0.98))) %>%
+         mutate(NLR = ifelse(NLR <= quantile(phenotype3$NLR, probs = 0.98),
+                             NLR,quantile(phenotype3$NLR, probs = 0.98)),
+                LM_ratio = ifelse(LM_ratio <= quantile(phenotype3$LM_ratio, 
+                                                       probs = 0.98),
+                                  LM_ratio,quantile(phenotype3$LM_ratio, 
+                                                    probs = 0.98)),
+                CD4_to_8 = ifelse(CD4_to_8 <= quantile(phenotype3$CD4_to_8, 
+                                                       probs = 0.98),CD4_to_8,
+                                  quantile(phenotype3$CD4_to_8, probs = 0.98)),
+                CD4nv_to_mem = ifelse(CD4nv_to_mem <= quantile(phenotype3$CD4nv_to_mem,
+                                                               probs = 0.98),
+                                      CD4nv_to_mem,quantile(phenotype3$CD4nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8nv_to_mem = ifelse(CD8nv_to_mem <= quantile(phenotype3$CD8nv_to_mem,
+                                                               probs = 0.98),
+                                      CD8nv_to_mem,quantile(phenotype3$CD8nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8mem_Treg = ifelse(CD8mem_Treg <= median(phenotype3$CD8mem_Treg),
+                                    "Low CD8mem/Treg","High CD8mem/Treg"),
+                Nv_Lymph = ifelse(Nv_Lymph <= quantile(phenotype3$Nv_Lymph,probs = 0.98),
+                                  Nv_Lymph,quantile(phenotype3$Nv_Lymph,probs = 0.98)))
+
+```
+
+______________________________
+
+# partDSA
+
+# NLR
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype3_win, select =c(Age, Sex, `Tumor grade`, `Smoking status`, BCG, NLR))
+OSTime = phenotype3_win$TenYearSurv
+OScen = phenotype3_win$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(OSTime),OScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+
+#Best 4 partitions
+  #Partition 1 [of 4]:
+    #(NLR <= 3.113412)
+  #Partition 2 [of 4]:
+    #(BCG is Without Immuno) && (3.113412 < NLR <= 7.399816)
+  #Partition 3 [of 4]:
+    #(7.399816 < NLR)
+  #Partition 4 [of 4]:
+    #(BCG is With Immuno) && (3.113412 < NLR <= 7.399816)
+
+GroupOS <- phenotype3_win %>% 
+           mutate(Group = ifelse( NLR <= 3.113412, "Group 1", 
+                          ifelse(BCG == "Without Immuno" & 3.113412 < NLR &  NLR <= 7.399816, 
+                                 "Group 2",
+                          ifelse( NLR > 7.399816, "Group 3","Group 4"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 54, y = 0, label = 58.32) +
+          annotate("text", x = 70, y = 0, label = 65.97) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + `Tumor grade` + `Smoking status` + BCG + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# imm + clinical features
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer_imm<-subset(phenotype3_win, select =c(Age, Sex, `Tumor grade`, `Smoking status`, BCG, Bnv, CD4mem, CD4nv, CD8mem, Neu, NK))
+OSTime = phenotype3_win$TenYearSurv
+OScen = phenotype3_win$TenDead
+model.IPCW_imm = partDSA(x=xinfer_imm, y=Surv(log(OSTime),OScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW_imm
+showDSA(model.IPCW_imm)
+#Best 4 partitions
+  #Partition 1 [of 4]:
+    #(CD4nv <= 1.810000) && (Neu <= 67.090000)
+  #Partition 2 [of 4]:
+    #(67.090000 < Neu)
+  #Partition 3 [of 4]:
+    #(1.810000 < CD4nv <= 4.530000) && (Neu <= 67.090000)
+  #Partition 4 [of 4]:
+    #(4.530000 < CD4nv) && (Neu <= 67.090000)
+
+GroupOS <- phenotype3_win %>% 
+           mutate(Group = ifelse(Neu > 67.09, "Group 2", 
+                          ifelse(Neu <= 67.09 & CD4nv <= 1.81,"Group 1",
+                          ifelse(Neu <= 67.09 & 4.53 < CD4nv, "Group 4","Group 3"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 111, y = 0, label = 115.97) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + `Tumor grade` + `Smoking status` + BCG + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# imm only
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer_immOnly<-subset(phenotype3_win, select =c(Bnv, CD4mem, CD4nv, CD8mem, Neu, NK))
+OSTime = phenotype3_win$TenYearSurv
+OScen = phenotype3_win$TenDead
+model.IPCW_immOnly = partDSA(x=xinfer_immOnly, y=Surv(log(OSTime),OScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW_immOnly
+showDSA(model.IPCW_immOnly)
+# Best 4 partitions
+  #Partition 1 [of 4]:
+    #(CD8mem <= 17.320000) && (Neu <= 72.770000)
+  #Partition 2 [of 4]:
+    #(CD4mem <= 1.430000) && (72.770000 < Neu)
+  #Partition 3 [of 4]:
+    #(1.430000 < CD4mem) && (72.770000 < Neu)
+  #Partition 4 [of 4]:
+    #(17.320000 < CD8mem) && (Neu <= 72.770000)
+
+GroupOS <- phenotype3_win %>% 
+           mutate(Group = ifelse(CD8mem <= 17.32 & Neu <= 72.77, "Group 1", 
+                          ifelse(CD4mem <= 1.43 & Neu > 72.77,"Group 2",
+                          ifelse(CD4mem > 1.43 & Neu > 72.77, "Group 3","Group 4"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 22, y = 0, label = 26.45) +
+          annotate("text", x = 83, y = 0, label = 87.43) +
+          annotate("text", x = 61, y = 0, label = 65.97) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + `Tumor grade` + `Smoking status` + strata(muscinv) + BCG + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# OS_NLR_Bnv_CD4mem_CD8mem_Neu_NK
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NLR, Bnv2, CD4mem2, CD8mem2, Neu2, NK2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 4 partitions
+  #Partition 1 [of 4]:
+   # (muscinv is no) && (NLR <= 7.216790)
+  #Partition 2 [of 4]:
+   # (muscinv is yes) && (NK2 <= 1.820000)
+  #Partition 3 [of 4]:
+   # (muscinv is no) && (7.216790 < NLR)
+  #Partition 4 [of 4]:
+   # (muscinv is yes) && (1.820000 < NK2)
+
+GroupOS <- phenotype4 %>% 
+           mutate(Group = ifelse(muscinv == "yes"&NK2 <= 1.82, "Group 4", 
+                          ifelse(muscinv == "yes"&NK2 > 1.82, "Group 3",
+                          ifelse(muscinv == "no"&NLR <= 7.22, "Group 2","Group 1"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 22, y = 0, label = 26.45) +
+          annotate("text", x = 83, y = 0, label = 87.43) +
+          annotate("text", x = 61, y = 0, label = 65.97) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + grade2 + smkstat2 + strata(muscinv) + ImmunoTx + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# RFS_NLR_CD4mem_CD8mem_Mono
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NLR, CD4mem2, CD8mem2, Mono2))
+RFSTime = phenotype4$TenYearRFS
+RFScen = phenotype4$TenRFS
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 4 partitions
+  #Partition 1 [of 4]:
+   # (BCG is Without Immuno) && (Mono2 <= 8.860000)
+  #Partition 2 [of 4]:
+   # (BCG is With Immuno) && (CD8mem2 <= 0.470000)
+  #Partition 3 [of 4]:
+   # (BCG is With Immuno) && (0.470000 < CD8mem2)
+  #Partition 4 [of 4]:
+   # (BCG is Without Immuno) && (8.860000 < Mono2)
+
+GroupRFS <- phenotype4 %>% 
+           mutate(Group = ifelse(ImmunoTx == "Without Immuno"&Mono2 <= 8.86, "Group 4", 
+                          ifelse(ImmunoTx == "Without Immuno"&Mono2 > 8.86, "Group 3",
+                          ifelse(ImmunoTx == "With Immuno"&CD8mem2 <= 0.47, "Group 2","Group 1"))))
+table(GroupRFS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearRFS, TenRFS) ~ Group, data = GroupRFS)
+RFS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year recurrence-free survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearRFS, TenRFS) ~ Group, data = GroupRFS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+RFS_10y$plot <- RFS_10y$plot + 
+          annotate("text", x = 15, y = 0, label = 19.89) +
+          annotate("text", x = 32, y = 0, label = 36.68) +
+          annotate("text", x = 47, y = 0, label = 51.25) +
+          annotate("text", x = 73, y = 0, label = 77.41) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+#cox.zph(os4)
+
+# Cox model
+Cox_G2 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + grade2 + smkstat2 + strata(muscinv) + strata(ImmunoTx) + Group, data = GroupRFS)
+summary(Cox_G2)
+cox.zph(Cox_G2)
+```

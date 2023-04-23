@@ -1,0 +1,577 @@
+---
+title: "Multivariate survival trees"
+author: "Ji-Qing Chen"
+date: "11/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MST)
+library(dplyr)
+library(survival)
+library(survminer)
+library(partDSA)
+```
+
+
+```{r cars}
+data <- rmultime(N = 200, K = 4, beta = c(-1, 0.8, 0.8, 0, 0),cutoff = c(0.5, 0.3, 0, 0), model = "marginal.multivariate.exponential",rho = 0.65)$dat
+
+test <- rmultime(N = 100, K = 4, beta = c(-1, 0.8, 0.8, 0, 0),cutoff = c(0.5, 0.3, 0, 0), model = "marginal.multivariate.exponential",rho = 0.65)$dat
+```
+
+```{r}
+fit <- MST(formula = Surv(time, status) ~ x1 + x2 + x3 + x4 | id,data,test, method = "marginal", minsplit = 100, minevents = 20,selection.method = "test.sample")
+```
+
+```{r}
+tree_final <- getTree(fit, "4")
+plot(tree_final)
+```
+
+```{r}
+data$term_nodes <- as.factor(predict(tree_final, newdata = data,type = "node"))
+table(data$term_nodes)
+coxph(Surv(time, status) ~ term_nodes + cluster(id), data = data)
+```
+________________________________________
+# Load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean.RData")
+rm(phenotype1,Recu)
+```
+
+# clean data
+```{r}
+# weird data
+weird = phenotype2[which(phenotype2$ddstat=="dead" & phenotype2$RecurYN=="yes" &
+                         phenotype2$survreftmd<phenotype2$recsurgtmd),]
+# remove weird data
+phenotype3 <- phenotype2 %>%
+          dplyr::select(Sample_Name,refage,sex,grade2,smkstat2,
+                 ImmunoTx,TenYearRFS, TenRFS, TenDead, TenYearSurv, 
+                 SurgToBlood,muscinv) %>%
+          right_join(Extended2) %>%
+          mutate(CD4 = CD4mem + CD4nv + Treg,
+                 CD8 = CD8mem + CD8nv,
+                 Bcell = Bmem + Bnv) %>%
+          mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                 Lymph = Bmem + Bnv + NK + T_cell,
+                 Nv = Bnv + CD8nv + CD4nv) %>%
+          mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph),
+                 LM_ratio = ifelse(Mono == 0,Lymph/0.01, Lymph/Mono),
+                 Bnv_pct= ifelse(Bcell == 0,(Bnv/0.01)*100, (Bnv/Bcell)*100),
+                 CD4_to_8 = ifelse(CD8 == 0,CD4/0.01, CD4/CD8),
+                 CD4_nv_pct = ifelse(CD4 == 0, (CD4nv/0.01)*100, (CD4nv/CD4)*100),
+                 CD4nv_to_mem = ifelse(CD4mem == 0,CD4nv/0.01, CD4nv/CD4mem),
+                 CD8_nv_pct = ifelse(CD8 == 0, (CD8nv/0.01)*100, (CD8nv/CD8)*100),
+                 CD8nv_to_mem = ifelse(CD8mem == 0,CD8nv/0.01, CD8nv/CD8mem),
+                 CD8mem_Treg = ifelse(Treg == 0,CD8mem/0.01, CD8mem/Treg),
+                 Treg_pct = ifelse(CD4 == 0, (Treg/0.01)*100, (Treg/CD4)*100),
+                 Nv_Lymph = ifelse(Lymph == 0,Nv/0.01,Nv/Lymph))
+# Winsorization
+phenotype3_win <- phenotype3 %>%
+         mutate(Bas = ifelse(Bas <= quantile(phenotype3$Bas, probs = 0.98),
+                             Bas,quantile(phenotype3$Bas, probs = 0.98)),
+                Bmem = ifelse(Bmem <= quantile(phenotype3$Bmem, probs = 0.98),
+                              Bmem,quantile(phenotype3$Bmem, probs = 0.98)),
+                Bnv = ifelse(Bnv <= quantile(phenotype3$Bnv, probs = 0.98),
+                             Bnv,quantile(phenotype3$Bnv, probs = 0.98)),
+                CD4mem = ifelse(CD4mem <= quantile(phenotype3$CD4mem, probs = 0.98),
+                                CD4mem,quantile(phenotype3$CD4mem, probs = 0.98)),
+                CD4nv = ifelse(CD4nv <= quantile(phenotype3$CD4nv, probs = 0.98),
+                               CD4nv,quantile(phenotype3$CD4nv, probs = 0.98)),
+                CD8mem = ifelse(CD8mem <= quantile(phenotype3$CD8mem, probs = 0.98),
+                                CD8mem,quantile(phenotype3$CD8mem, probs = 0.98)),
+                CD8nv = ifelse(CD8nv <= quantile(phenotype3$CD8nv, probs = 0.98),
+                               CD8nv,quantile(phenotype3$CD8nv, probs = 0.98)),
+                Eos = ifelse(Eos <= quantile(phenotype3$Eos, probs = 0.98),
+                             Eos,quantile(phenotype3$Eos, probs = 0.98)),
+                Mono = ifelse(Mono <= quantile(phenotype3$Mono, probs = 0.98),
+                              Mono,quantile(phenotype3$Mono, probs = 0.98)),
+                Neu = ifelse(Neu <= quantile(phenotype3$Neu, probs = 0.02),
+                             quantile(phenotype3$Neu, probs = 0.02),Neu),
+                NK = ifelse(NK <= quantile(phenotype3$NK, probs = 0.98),
+                            NK,quantile(phenotype3$NK, probs = 0.98)),
+                Treg = ifelse(Treg <= quantile(phenotype3$Treg, probs = 0.98),
+                              Treg,quantile(phenotype3$Treg, probs = 0.98))) %>%
+         mutate(CD4 = ifelse(CD4 <= quantile(phenotype3$CD4, probs = 0.98),
+                             CD4,quantile(phenotype3$CD4, probs = 0.98)),
+                CD8 = ifelse(CD8 <= quantile(phenotype3$CD8, probs = 0.98),
+                             CD8,quantile(phenotype3$CD8, probs = 0.98)),
+                Bcell = ifelse(Bcell <= quantile(phenotype3$Bcell, probs = 0.98),
+                               Bcell,quantile(phenotype3$Bcell, probs = 0.98)),
+                Lymph = ifelse(Lymph <= quantile(phenotype3$Lymph, probs = 0.98),
+                               Lymph,quantile(phenotype3$Lymph, probs = 0.98)),
+                Nv = ifelse(Nv <= quantile(phenotype3$Nv, probs = 0.98),
+                            Nv,quantile(phenotype3$Nv, probs = 0.98))) %>%
+         mutate(NLR = ifelse(NLR <= quantile(phenotype3$NLR, probs = 0.98),
+                             NLR,quantile(phenotype3$NLR, probs = 0.98)),
+                LM_ratio = ifelse(LM_ratio <= quantile(phenotype3$LM_ratio, 
+                                                       probs = 0.98),
+                                  LM_ratio,quantile(phenotype3$LM_ratio, 
+                                                    probs = 0.98)),
+                CD4_to_8 = ifelse(CD4_to_8 <= quantile(phenotype3$CD4_to_8, 
+                                                       probs = 0.98),CD4_to_8,
+                                  quantile(phenotype3$CD4_to_8, probs = 0.98)),
+                CD4nv_to_mem = ifelse(CD4nv_to_mem <= quantile(phenotype3$CD4nv_to_mem,
+                                                               probs = 0.98),
+                                      CD4nv_to_mem,quantile(phenotype3$CD4nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8nv_to_mem = ifelse(CD8nv_to_mem <= quantile(phenotype3$CD8nv_to_mem,
+                                                               probs = 0.98),
+                                      CD8nv_to_mem,quantile(phenotype3$CD8nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8mem_Treg = ifelse(CD8mem_Treg <= median(phenotype3$CD8mem_Treg),
+                                    "Low CD8mem/Treg","High CD8mem/Treg"),
+                Nv_Lymph = ifelse(Nv_Lymph <= quantile(phenotype3$Nv_Lymph,probs = 0.98),
+                                  Nv_Lymph,quantile(phenotype3$Nv_Lymph,probs = 0.98)))
+
+phenotype3_win <- phenotype3_win %>%
+                  mutate(Age = refage, Sex = sex, `Tumor grade` = grade2, 
+                         `Smoking status` = smkstat2, BCG = ImmunoTx)
+```
+
+
+# survival trees
+```{r}
+fit_bladder <- MST(formula = Surv(TenYearSurv, TenDead) ~ Age + Sex + `Tumor grade` + `Smoking status` + BCG + muscinv + NLR,phenotype4)
+```
+
+# plot
+```{r}
+tree_bladder <- getTree(fit_bladder, "log_n")
+plot(tree_bladder)
+```
+
+# strata variables
+```{r}
+fit_bladder2 <- MST(formula = Surv(TenYearSurv, TenDead) ~ Age + Sex + `Tumor grade` + `Smoking status` + BCG + strata(muscinv) + NLR,phenotype4)
+```
+
+```{r}
+tree_bladder2 <- getTree(fit_bladder2, "log_n")
+plot(tree_bladder2)
+```
+
+# immune cell
+```{r}
+fit_bladder4 <- MST(formula = Surv(TenYearRFS, TenRFS) ~ Age + strata(Sex) + `Tumor grade` + `Smoking status` + strata(BCG) + CD8T,NMIBC2, method = "marginal")
+
+tree_bladder4 <- getTree(fit_bladder4, "log_n")
+plot(tree_bladder4)
+```
+____________________________________________
+# group patients according to the trees
+```{r}
+NMIBC3 <- NMIBC %>% 
+          mutate(Group = ifelse(refage<=63, "Group 1", 
+                                ifelse(smkstat2 == "non-smoker","Group 2",
+                                       ifelse(grade2 == "grad 1 + 2","Group 3","Group 4"))))
+```
+
+# Plot function
+```{r}
+Plot_Cell_Type <- function(DF, YLab, P_Y, cell_type) {
+                my_comparisons <- list(c("Group 1", "Group 2"),
+                                       c("Group 2", "Group 3"),
+                                       c("Group 3", "Group 4"),
+                                       c("Group 1", "Group 3"),
+                                       c("Group 2", "Group 4"),
+                                       c("Group 1", "Group 4"))
+                PLOT = ggplot(DF, aes(x = Group, y = cell_type, color = Group)) +
+                       geom_boxplot(position = position_dodge(width = 0.95),
+                                    outlier.size = 1) +
+                       geom_beeswarm(alpha=0.2, cex = 0.4) +
+                       stat_compare_means(comparisons = my_comparisons, 
+                                          method = "wilcox.test",
+                                          label = "p.signif",
+                                          size = 2) +
+                       stat_compare_means(label.y = P_Y,
+                                          #label = "p.format",
+                                          size = 3.6,
+                                          method = "anova") +
+                       labs(x = "", y = YLab, colour = "") +
+                       theme_classic() +
+                       scale_color_nejm() +
+                       theme(legend.position = "none",
+                             text=element_text(size=12, face = "bold"),
+                             plot.margin = unit(c(6,0,6,0), "pt")) +
+                       scale_y_continuous(labels = scales::percent_format(accuracy = 1)) 
+                return(PLOT)
+                
+        }
+
+
+Plot_NLR <- function(DF, YLab, P_Y, cell_type) {
+                my_comparisons <- list(c("Group 1", "Group 2"),
+                                       c("Group 2", "Group 3"),
+                                       c("Group 3", "Group 4"),
+                                       c("Group 1", "Group 3"),
+                                       c("Group 2", "Group 4"),
+                                       c("Group 1", "Group 4"))
+                PLOT = ggplot(DF, aes(x = Group, y = cell_type, color = Group)) +
+                       geom_boxplot(position = position_dodge(width = 0.95),
+                                    outlier.size = 1) +
+                       geom_beeswarm(alpha=0.2, cex = 0.4) +
+                       stat_compare_means(comparisons = my_comparisons, 
+                                          method = "wilcox.test",
+                                          label = "p.signif",
+                                          size = 2) +
+                       stat_compare_means(label.y = P_Y,
+                                          #label = "p.format",
+                                          size = 3.6,
+                                          method = "anova") +
+                       labs(x = "", y = YLab, colour = "") +
+                       theme_classic() +
+                       scale_color_nejm() +
+                       theme(legend.position = "none",
+                             text=element_text(size=12, face = "bold"),
+                             plot.margin = unit(c(6,0,6,0), "pt"))
+                      
+                return(PLOT)
+                
+        }
+```
+
+# Cell proportion plots
+```{r}
+# CD4T
+NMIBC3_CD4 = NMIBC3 %>% mutate(CD4T = CD4T/100) %>% select(Group,CD4T)
+CD4T_plot = Plot_Cell_Type(NMIBC3_CD4,"CD4T Percent",0.85, NMIBC3_CD4$CD4T)
+# CD8T
+NMIBC3_CD8 = NMIBC3 %>% mutate(CD8T = CD8T/100) %>% select(Group,CD8T)
+CD8T_plot = Plot_Cell_Type(NMIBC3_CD8,"CD8T Percent",0.55, NMIBC3_CD8$CD8T)
+# B cell
+NMIBC3_Bcell = NMIBC3 %>% mutate(Bcell = Bcell/100) %>% select(Group,Bcell)
+Bcell_plot = Plot_Cell_Type(NMIBC3_Bcell,"B cell Percent",0.32, NMIBC3_Bcell$Bcell)
+# NK
+NMIBC3_NK = NMIBC3 %>% mutate(NK = NK/100) %>% select(Group,NK)
+NK_plot = Plot_Cell_Type(NMIBC3_NK,"NK Percent",0.34, NMIBC3_NK$NK)
+# Mono
+NMIBC3_Mono = NMIBC3 %>% mutate(Mono = Mono/100) %>% select(Group,Mono)
+Mono_plot = Plot_Cell_Type(NMIBC3_Mono,"Monocyte Percent",0.34, NMIBC3_Mono$Mono)
+# Neu
+NMIBC3_Neu = NMIBC3 %>% mutate(Neu = Neu/100) %>% select(Group,Neu)
+Neu_plot = Plot_Cell_Type(NMIBC3_Neu,"Neutrophil Percent",1.43, NMIBC3_Neu$Neu)
+# NLR
+NLR_plot = Plot_NLR(NMIBC3,"NLR",31, NMIBC3$mdNLR)
+```
+
+# Save
+```{r}
+Row1 = plot_grid(NLR_plot, ncol = 1)
+Row2 = ""
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Outcome Analysis/Recurence/5 and 10 years Recur/Survival trees/NLR.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
+
+# Cox for each group
+```{r}
+Group1 = NMIBC3 %>% filter(Group == "Group 1")
+Group2 = NMIBC3 %>% filter(Group == "Group 2")
+Group3 = NMIBC3 %>% filter(Group == "Group 3")
+Group4 = NMIBC3 %>% filter(Group == "Group 4")
+# Group 1
+Cox_G1 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + grade2 + smkstat2 + ImmunoTx + mdNLR, data = Group1)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+# Group 2
+Cox_G2 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + grade2 + ImmunoTx + mdNLR, data = Group2)
+summary(Cox_G2)
+cox.zph(Cox_G2)
+# Group 3
+Cox_G3 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + ImmunoTx + mdNLR, data = Group3)
+summary(Cox_G3)
+cox.zph(Cox_G3)
+# Group 4
+Cox_G4 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + ImmunoTx + mdNLR, data = Group4)
+summary(Cox_G4)
+cox.zph(Cox_G4)
+```
+
+# KM plot
+```{r}
+fit_10y = survfit(Surv(TenYearRFS, TenRFS) ~ Group, data = NMIBC3)
+Recur_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year recurrence-free survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+Recur_10y$plot <- Recur_10y$plot + 
+          annotate("text", x = 98, y = 0, label = 102.34, size = 2) +
+          annotate("text", x = 113, y = 0, label = 117.14, size = 2) +
+          annotate("text", x = 51, y = 0, label = 47.29, size = 2) +
+          annotate("text", x = 19, y = 0, label = 15.39, size = 2) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10), 
+                #legend.text = element_text(size = 8), 
+                axis.title.y = element_text(size = 6.5))
+#cox.zph(os4)
+
+Row1 = plot_grid(Recur_10y$plot, ncol = 1)
+Row2 = ""
+Comb = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Outcome Analysis/Recurence/5 and 10 years Recur/Survival trees/Group.pdf"), plot = Comb, height = 9, width = 7.5)
+```
+
+______________________________
+
+# partDSA
+
+# NLR
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NLR))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+
+# Best 3 partitions
+  #Partition 1 [of 3]:
+   # (muscinv is no) && (NLR <= 7.216790)
+  #Partition 2 [of 3]:
+   # (muscinv is yes)
+  #Partition 3 [of 3]:
+   # (muscinv is no) && (7.216790 < NLR)
+```
+
+# Bnv
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, Bnv2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+    #(muscinv is no) && (Bnv2 <= 2.050000)
+  #Partition 2 [of 3]:
+    #(muscinv is yes)
+  #Partition 3 [of 3]:
+    #(muscinv is no) && (2.050000 < Bnv2)
+```
+
+# CD4mem
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, CD4mem2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+    #(muscinv is no) && (CD4mem2 <= 2.590000)
+  #Partition 2 [of 3]:
+    #(muscinv is yes)
+  #Partition 3 [of 3]:
+    #(muscinv is no) && (2.590000 < CD4mem2)
+```
+
+# CD8mem
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, CD8mem2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+    #(muscinv is no) && (CD8mem2 <= 5.590000)
+  #Partition 2 [of 3]:
+    #(muscinv is yes)
+  #Partition 3 [of 3]:
+   # (muscinv is no) && (5.590000 < CD8mem2)
+```
+
+# Neu
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, Neu2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+   # (muscinv is no) && (Neu2 <= 81.520000)
+  #Partition 2 [of 3]:
+   # (muscinv is yes)
+  #Partition 3 [of 3]:
+   # (muscinv is no) && (81.520000 < Neu2)
+```
+
+# NK
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NK2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+   # (muscinv is no)
+  #Partition 2 [of 3]:
+   # (muscinv is yes) && (NK2 <= 1.820000)
+  #Partition 3 [of 3]:
+   # (muscinv is yes) && (1.820000 < NK2)
+```
+
+# Mono
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, Mono2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 3 partitions
+  #Partition 1 [of 3]:
+   # (muscinv is no)
+  #Partition 2 [of 3]:
+   # (muscinv is yes) && (Mono2 <= 8.010000)
+  #Partition 3 [of 3]:
+   # (muscinv is yes) && (8.010000 < Mono2)
+```
+
+# OS_NLR_Bnv_CD4mem_CD8mem_Neu_NK
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NLR, Bnv2, CD4mem2, CD8mem2, Neu2, NK2))
+RFSTime = phenotype4$TenYearSurv
+RFScen = phenotype4$TenDead
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 4 partitions
+  #Partition 1 [of 4]:
+   # (muscinv is no) && (NLR <= 7.216790)
+  #Partition 2 [of 4]:
+   # (muscinv is yes) && (NK2 <= 1.820000)
+  #Partition 3 [of 4]:
+   # (muscinv is no) && (7.216790 < NLR)
+  #Partition 4 [of 4]:
+   # (muscinv is yes) && (1.820000 < NK2)
+
+GroupOS <- phenotype4 %>% 
+           mutate(Group = ifelse(muscinv == "yes"&NK2 <= 1.82, "Group 4", 
+                          ifelse(muscinv == "yes"&NK2 > 1.82, "Group 3",
+                          ifelse(muscinv == "no"&NLR <= 7.22, "Group 2","Group 1"))))
+table(GroupOS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Group, data = GroupOS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+OS_10y$plot <- OS_10y$plot + 
+          annotate("text", x = 22, y = 0, label = 26.45) +
+          annotate("text", x = 83, y = 0, label = 87.43) +
+          annotate("text", x = 61, y = 0, label = 65.97) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+
+# Cox model
+Cox_G1 = coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + grade2 + smkstat2 + strata(muscinv) + ImmunoTx + Group, data = GroupOS)
+summary(Cox_G1)
+cox.zph(Cox_G1)
+```
+
+# RFS_NLR_CD4mem_CD8mem_Mono
+```{r}
+#first subset dataset with those variables you want to include in the tree
+xinfer<-subset(phenotype4, select =c(Age, Sex, `Tumor grade`, `Smoking status`, muscinv, BCG, NLR, CD4mem2, CD8mem2, Mono2))
+RFSTime = phenotype4$TenYearRFS
+RFScen = phenotype4$TenRFS
+model.IPCW = partDSA(x=xinfer, y=Surv(log(RFSTime),RFScen),
+                     control = DSA.control(loss.function = "IPCW"))
+model.IPCW
+showDSA(model.IPCW)
+# Best 4 partitions
+  #Partition 1 [of 4]:
+   # (BCG is Without Immuno) && (Mono2 <= 8.860000)
+  #Partition 2 [of 4]:
+   # (BCG is With Immuno) && (CD8mem2 <= 0.470000)
+  #Partition 3 [of 4]:
+   # (BCG is With Immuno) && (0.470000 < CD8mem2)
+  #Partition 4 [of 4]:
+   # (BCG is Without Immuno) && (8.860000 < Mono2)
+
+GroupRFS <- phenotype4 %>% 
+           mutate(Group = ifelse(ImmunoTx == "Without Immuno"&Mono2 <= 8.86, "Group 4", 
+                          ifelse(ImmunoTx == "Without Immuno"&Mono2 > 8.86, "Group 3",
+                          ifelse(ImmunoTx == "With Immuno"&CD8mem2 <= 0.47, "Group 2","Group 1"))))
+table(GroupRFS$Group)
+
+# KM plot
+fit_10y = survfit(Surv(TenYearRFS, TenRFS) ~ Group, data = GroupRFS)
+RFS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year recurrence-free survival probability",
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("Group 1","Group 2","Group 3","Group 4"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearRFS, TenRFS) ~ Group, data = GroupRFS)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+#summary(os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ age_cut, data=Age_Analysis))
+RFS_10y$plot <- RFS_10y$plot + 
+          annotate("text", x = 15, y = 0, label = 19.89) +
+          annotate("text", x = 32, y = 0, label = 36.68) +
+          annotate("text", x = 47, y = 0, label = 51.25) +
+          annotate("text", x = 73, y = 0, label = 77.41) +
+          #annotate("text", x = 60, y = 0.8, label = "Age > 65 \n HR = 1.43, \n 95% CI: 1.16 - 1.75, \n p-value = 6.7E-4", size = 2.5) +
+          theme(plot.title = element_text(size = 10))
+#cox.zph(os4)
+
+# Cox model
+Cox_G2 = coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + grade2 + smkstat2 + strata(muscinv) + strata(ImmunoTx) + Group, data = GroupRFS)
+summary(Cox_G2)
+cox.zph(Cox_G2)
+```
