@@ -1,0 +1,504 @@
+---
+title: "AllBC_outcomes"
+author: "Ji-Qing Chen"
+date: "5/25/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(survival)
+library(survminer)
+library(stargazer)
+'%!in%' <- Negate('%in%')
+```
+
+# load data
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean2.RData")
+rm(Recu,phenotype1)
+
+# load extended immune
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion2.RData")
+```
+
+# clean data
+```{r}
+# weird data
+weird = phenotype2[which(phenotype2$ddstat=="dead" & phenotype2$RecurYN=="yes" &
+                         phenotype2$survreftmd<phenotype2$recsurgtmd),]
+
+phenotype3 <- phenotype2 %>%
+          dplyr::select(Sample_Name,refage,sex,grade2,smkstat2,
+                 ImmunoTx,TenYearRFS, TenRFS, TenDead, TenYearSurv, 
+                 SurgToBlood,muscinv) %>%
+          left_join(Extended2) %>%
+          filter(Sample_Name %!in% weird$Sample_Name) %>%
+          mutate(CD4 = CD4mem + CD4nv + Treg,
+                 CD8 = CD8mem + CD8nv,
+                 Bcell = Bmem + Bnv) %>%
+          mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                 Lymph = Bmem + Bnv + NK + T_cell,
+                 Nv = Bnv + CD8nv + CD4nv) %>%
+          mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph),
+                 LM_ratio = ifelse(Mono == 0,Lymph/0.01, Lymph/Mono),
+                 Bnv_pct= ifelse(Bcell == 0,(Bnv/0.01)*100, (Bnv/Bcell)*100),
+                 CD4_to_8 = ifelse(CD8 == 0,CD4/0.01, CD4/CD8),
+                 CD4_nv_pct = ifelse(CD4 == 0, (CD4nv/0.01)*100, (CD4nv/CD4)*100),
+                 CD4nv_to_mem = ifelse(CD4mem == 0,CD4nv/0.01, CD4nv/CD4mem),
+                 CD8_nv_pct = ifelse(CD8 == 0, (CD8nv/0.01)*100, (CD8nv/CD8)*100),
+                 CD8nv_to_mem = ifelse(CD8mem == 0,CD8nv/0.01, CD8nv/CD8mem),
+                 CD8mem_Treg = ifelse(Treg == 0,CD8mem/0.01, CD8mem/Treg),
+                 Treg_pct = ifelse(CD4 == 0, (Treg/0.01)*100, (Treg/CD4)*100),
+                 Nv_Lymph = ifelse(Lymph == 0,Nv/0.01,Nv/Lymph))
+# Winsorization
+phenotype3_win <- phenotype3 %>%
+         mutate(Bas = ifelse(Bas <= quantile(phenotype3$Bas, probs = 0.98),
+                             Bas,quantile(phenotype3$Bas, probs = 0.98)),
+                Bmem = ifelse(Bmem <= quantile(phenotype3$Bmem, probs = 0.98),
+                              Bmem,quantile(phenotype3$Bmem, probs = 0.98)),
+                Bnv = ifelse(Bnv <= quantile(phenotype3$Bnv, probs = 0.98),
+                             Bnv,quantile(phenotype3$Bnv, probs = 0.98)),
+                CD4mem = ifelse(CD4mem <= quantile(phenotype3$CD4mem, probs = 0.98),
+                                CD4mem,quantile(phenotype3$CD4mem, probs = 0.98)),
+                CD4nv = ifelse(CD4nv <= quantile(phenotype3$CD4nv, probs = 0.98),
+                               CD4nv,quantile(phenotype3$CD4nv, probs = 0.98)),
+                CD8mem = ifelse(CD8mem <= quantile(phenotype3$CD8mem, probs = 0.98),
+                                CD8mem,quantile(phenotype3$CD8mem, probs = 0.98)),
+                CD8nv = ifelse(CD8nv <= quantile(phenotype3$CD8nv, probs = 0.98),
+                               CD8nv,quantile(phenotype3$CD8nv, probs = 0.98)),
+                Eos = ifelse(Eos <= quantile(phenotype3$Eos, probs = 0.98),
+                             Eos,quantile(phenotype3$Eos, probs = 0.98)),
+                Mono = ifelse(Mono <= quantile(phenotype3$Mono, probs = 0.98),
+                              Mono,quantile(phenotype3$Mono, probs = 0.98)),
+                Neu = ifelse(Neu <= quantile(phenotype3$Neu, probs = 0.02),
+                             quantile(phenotype3$Neu, probs = 0.02),Neu),
+                NK = ifelse(NK <= quantile(phenotype3$NK, probs = 0.98),
+                            NK,quantile(phenotype3$NK, probs = 0.98)),
+                Treg = ifelse(Treg <= quantile(phenotype3$Treg, probs = 0.98),
+                              Treg,quantile(phenotype3$Treg, probs = 0.98))) %>%
+         mutate(CD4 = ifelse(CD4 <= quantile(phenotype3$CD4, probs = 0.98),
+                             CD4,quantile(phenotype3$CD4, probs = 0.98)),
+                CD8 = ifelse(CD8 <= quantile(phenotype3$CD8, probs = 0.98),
+                             CD8,quantile(phenotype3$CD8, probs = 0.98)),
+                Bcell = ifelse(Bcell <= quantile(phenotype3$Bcell, probs = 0.98),
+                               Bcell,quantile(phenotype3$Bcell, probs = 0.98)),
+                Lymph = ifelse(Lymph <= quantile(phenotype3$Lymph, probs = 0.98),
+                               Lymph,quantile(phenotype3$Lymph, probs = 0.98)),
+                Nv = ifelse(Nv <= quantile(phenotype3$Nv, probs = 0.98),
+                            Nv,quantile(phenotype3$Nv, probs = 0.98))) %>%
+         mutate(NLR = ifelse(NLR <= quantile(phenotype3$NLR, probs = 0.98),
+                             NLR,quantile(phenotype3$NLR, probs = 0.98)),
+                LM_ratio = ifelse(LM_ratio <= quantile(phenotype3$LM_ratio, 
+                                                       probs = 0.98),
+                                  LM_ratio,quantile(phenotype3$LM_ratio, 
+                                                    probs = 0.98)),
+                CD4_to_8 = ifelse(CD4_to_8 <= quantile(phenotype3$CD4_to_8, 
+                                                       probs = 0.98),CD4_to_8,
+                                  quantile(phenotype3$CD4_to_8, probs = 0.98)),
+                CD4nv_to_mem = ifelse(CD4nv_to_mem <= quantile(phenotype3$CD4nv_to_mem,
+                                                               probs = 0.98),
+                                      CD4nv_to_mem,quantile(phenotype3$CD4nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8nv_to_mem = ifelse(CD8nv_to_mem <= quantile(phenotype3$CD8nv_to_mem,
+                                                               probs = 0.98),
+                                      CD8nv_to_mem,quantile(phenotype3$CD8nv_to_mem, 
+                                                        probs = 0.98)),
+                CD8mem_Treg = ifelse(CD8mem_Treg <= median(phenotype3$CD8mem_Treg),
+                                    "Low CD8mem/Treg","High CD8mem/Treg"),
+                Nv_Lymph = ifelse(Nv_Lymph <= quantile(phenotype3$Nv_Lymph,probs = 0.98),
+                                  Nv_Lymph,quantile(phenotype3$Nv_Lymph,probs = 0.98)))
+```
+
+# check collinearity
+```{r}
+library(rms)
+# RFS
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + muscinv + grade2 + smkstat2 + ImmunoTx + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono  + Neu + NK + Treg, data=phenotype3_win)
+vif(os1) # Neu has vif larger than 10
+cox.zph(os1) # age, sex, muscinv, ImmunoTx, violate proportional assumption
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono + NK + Treg, data=phenotype3_win)
+vif(os2) # No one has vif larger than 10
+cox.zph(os2) # age violate proportional assumption, except Global
+summary(os2)
+
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + sex + muscinv + grade2 + smkstat2 + ImmunoTx + NLR, data=phenotype3_win)
+vif(os3) # No one has vif larger than 10
+cox.zph(os3) # age, sex, muscinv, ImmunoTx, and NLR violate proportional assumption
+
+os3_2 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + NLR, data=phenotype3_win)
+vif(os3_2) # No one has vif larger than 10
+cox.zph(os3_2) # age violates proportional assumption, except Global
+summary(os3_2)
+
+# OS
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + muscinv + grade2 + smkstat2 + ImmunoTx + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono  + Neu + NK + Treg, data=phenotype3_win)
+vif(os4) # Neu has vif larger than 10
+cox.zph(os4) # muscinv, Eos violates proportional assumption
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono + NK + Treg, data=phenotype3_win)
+vif(os5) 
+cox.zph(os5) # Eos violates proportional assumption; not GLOBAL
+summary(os5)
+
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + NLR, data=phenotype3_win)
+vif(os6) # No one has vif larger than 10
+cox.zph(os6) # No one violate proportional assumption
+summary(os6)
+```
+
+_________________________________
+# univariate model
+```{r}
+# 10 year os
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ NLR, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Bas, data=phenotype3_win) 
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Bmem, data=phenotype3_win) 
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Bnv, data=phenotype3_win) 
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4mem, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4nv, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8mem, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8nv, data=phenotype3_win) # violate
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Eos, data=phenotype3_win) # violate
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Mono, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ NK, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Treg, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearSurv, TenDead) ~ Neu, data=phenotype3_win)
+cox.zph(os13)
+summary(os13)
+
+# 10 year rfs
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ NLR, data=phenotype3_win) # violate
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bas, data=phenotype3_win) 
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bmem, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bnv, data=phenotype3_win) 
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4mem, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4nv, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8mem, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8nv, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearRFS, TenRFS) ~ Eos, data=phenotype3_win)
+os10 <- coxph(Surv(TenYearRFS, TenRFS) ~ Mono, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearRFS, TenRFS) ~ NK, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearRFS, TenRFS) ~ Treg, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearRFS, TenRFS) ~ Neu, data=phenotype3_win)
+cox.zph(os13)
+summary(os13)
+```
+_________________________________
+
+# Extended immune cells + NLR RFS (age violates proportional assumption)
+```{r}
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + NLR, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Bas, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Bmem, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Bnv, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD4mem, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD4nv, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD8mem, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD8nv, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Eos, data=phenotype3_win)
+os10 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + NK, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Treg, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Neu, data=phenotype3_win)
+cox.zph(os13)
+summary(os13)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12,os13)
+
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[5]
+  punadj[k]=ff
+}
+
+
+b = list()
+for(k in 1:length(a)) {
+  cc = exp(confint(a[[k]]))
+  b[[k]] = cc
+  print(b)
+}
+b
+
+summary(a[[1]])$concordance[[1]]
+c = list("c-index")
+for(k in 1:length(a)) {
+  ll = round(summary(a[[k]])$concordance[[1]],digits = 3)
+  c[[1]][k+1] = ll
+  print(c)
+}
+c
+
+cox.zph(a[[8]])$table["GLOBAL",3]
+d = list("p.value (proportional assumption)")
+for(k in 1:length(a)) {
+  lll = round(cox.zph(a[[k]])$table["GLOBAL",3],digits = 4)
+  d[[1]][k+1] = lll
+  print(d)
+}
+d
+
+stargazer(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12,os13,apply.coef = exp,ci = T, ci.custom = b,p.auto=F,type = "html", out = "10RFS_ExtcellNLR_AllBC.htm", star.cutoffs=c(0.05,0.01,0.001), column.labels = c("Multivariable model"),column.separate = c(13), 
+          covariate.labels = c("Age","Grade 3 + 4 (ref.= Grade 1 + 2)","Ever-smoker (ref.= Non-smoker)","NLR","Basophils","Bmem","Bnv","CD4mem","CD4nv","CD8mem","CD8nv","Eosinophil","Monocyte","NK","Treg","Neutrophil"), 
+          dep.var.labels.include = FALSE, add.lines=c(c,d), omit.stat = c("max.rsq","ll","wald","logrank"),keep.stat = c("n","rsq","aic"),dep.var.caption = "Cox proportional hazards 10-year recurrence-free survival models",
+          notes = c("Winsorization was used for 2% value of each immune cell profile. Age and NLR violate proportional assumption"),notes.label = "",notes.align = "l")
+```
+
+# FDR
+```{r}
+a = list(os1,os3,os5,os6,os8,os10,os13)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[4,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+```
+
+# Step wise RFS (age violates)
+```{r}
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono+CD4mem, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono+CD4mem+Neu, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono+CD4mem+Neu+Bmem, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono+CD4mem+Neu+Bmem+CD4nv, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Mono+CD4mem+Neu+Bmem+CD4nv+CD8nv, data=phenotype3_win)
+summary(os2)
+cox.zph(os6)
+
+a = list(os1,os2,os3,os4,os5,os6)
+b = list()
+for(k in 1:length(a)) {
+  cc = exp(confint(a[[k]]))
+  b[[k]] = cc
+  print(b)
+}
+b
+
+summary(a[[1]])$concordance[[1]]
+c = list("c-index")
+for(k in 1:length(a)) {
+  ll = round(summary(a[[k]])$concordance[[1]],digits = 3)
+  c[[1]][k+1] = ll
+  print(c)
+}
+c
+
+d = list("p.value (proportional assumption)")
+for(k in 1:length(a)) {
+  lll = round(cox.zph(a[[k]])$table["GLOBAL",3],digits = 4)
+  d[[1]][k+1] = lll
+  print(d)
+}
+d
+
+stargazer(os1,os2,os3,os4,os5,os6,apply.coef = exp,ci = T, ci.custom = b,p.auto=F,type = "html", out = "10RFS_StepWise_AllBC.htm", star.cutoffs=c(0.05,0.01,0.001), column.labels = c("Multivariable model"),column.separate = c(7), 
+          covariate.labels = c("Age","Grade 3 + 4 (ref.= Grade 1 + 2)","Ever-smoker (ref.= Non-smoker)","Monocyte","CD4mem","Neutrophil","Bmem","CD4nv","CD8nv"), 
+          dep.var.labels.include = FALSE, add.lines=c(c,d), omit.stat = c("max.rsq","ll","wald","logrank"),keep.stat = c("n","rsq","aic"),dep.var.caption = "Cox proportional hazards 10-year recurrence-free survival models",
+          notes = c("Winsorization was used for 2% value of each immune cell profile. Age violates proportional assumption"),notes.label = "",notes.align = "l")
+```
+
+# Extended immune cells + NLR OS
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + NLR, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bas, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bmem, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bnv, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD4mem, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD4nv, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD8mem, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD8nv, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Eos, data=phenotype3_win) # violate proportional assumption
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Mono, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + NK, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Treg, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu, data=phenotype3_win)
+cox.zph(os12)
+summary(os13)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12,os13)
+b = list()
+for(k in 1:length(a)) {
+  cc = exp(confint(a[[k]]))
+  b[[k]] = cc
+  print(b)
+}
+b
+
+summary(a[[1]])$concordance[[1]]
+c = list("c-index")
+for(k in 1:length(a)) {
+  ll = round(summary(a[[k]])$concordance[[1]],digits = 3)
+  c[[1]][k+1] = ll
+  print(c)
+}
+c
+
+cox.zph(a[[8]])$table["GLOBAL",3]
+d = list("p.value (proportional assumption)")
+for(k in 1:length(a)) {
+  lll = round(cox.zph(a[[k]])$table["GLOBAL",3],digits = 4)
+  d[[1]][k+1] = lll
+  print(d)
+}
+d
+
+stargazer(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12,os13,apply.coef = exp,ci = T, ci.custom = b,p.auto=F,type = "html", out = "10OS_ExtcellNLR_AllBC.htm", star.cutoffs=c(0.05,0.01,0.001), column.labels = c("Multivariable model"),column.separate = c(13), 
+          covariate.labels = c("Age", "Female (ref.= Male)", "Grade 3 + 4 (ref.= Grade 1 + 2)","Ever-smoker (ref.= Non-smoker)", "BCG Trt. (ref.= Without BCG Trt.)","NLR", "Basophils","Bmem","Bnv","CD4mem","CD4nv","CD8mem","CD8nv","Eosinophil","Monocyte","NK","Treg","Neutrophil"), 
+          dep.var.labels.include = FALSE, add.lines=c(c,d), omit.stat = c("max.rsq","ll","wald","logrank"),keep.stat = c("n","rsq","aic"),dep.var.caption = "Cox proportional hazards 10-year overall survival models",
+          notes = c("Winsorization was used for 2% value of each immune cell profile. Bas violates proportional assumption"),notes.label = "",notes.align = "l")
+```
+
+# FDR
+```{r}
+a = list(os1,os3,os4,os5,os6,os7,os8,os11,os13)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[6,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+```
+
+# step wise OS
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu+CD8mem, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK + CD4mem, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK + CD4mem + Bnv, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK + CD4mem + Bnv + CD4nv, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK + CD4mem + Bnv + CD4nv + Bmem, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Neu + CD8mem + NK + CD4mem + Bnv + CD4nv + Bmem + CD8nv, data=phenotype3_win)
+
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8)
+b = list()
+for(k in 1:length(a)) {
+  cc = exp(confint(a[[k]]))
+  b[[k]] = cc
+  print(b)
+}
+b
+
+summary(a[[1]])$concordance[[1]]
+c = list("c-index")
+for(k in 1:length(a)) {
+  ll = round(summary(a[[k]])$concordance[[1]],digits = 3)
+  c[[1]][k+1] = ll
+  print(c)
+}
+c
+
+d = list("p.value (proportional assumption)")
+for(k in 1:length(a)) {
+  lll = round(cox.zph(a[[k]])$table["GLOBAL",3],digits = 4)
+  d[[1]][k+1] = lll
+  print(d)
+}
+d
+
+stargazer(os1,os2,os3,os4,os5,os6,os7,os8,apply.coef = exp,ci = T, ci.custom = b,p.auto=F,type = "html", out = "10OS_StepWise_AllBC.htm", star.cutoffs=c(0.05,0.01,0.001), column.labels = c("Multivariable model"),column.separate = c(10), 
+          covariate.labels = c("Age", "Female (ref.= Male)", "Grade 3 + 4 (ref.= Grade 1 + 2)","Ever-smoker (ref.= Non-smoker)", "BCG Trt. (ref.= Without BCG Trt.)", "Neutrophil", "CD8mem", "NK", "CD4mem", "Bnv", "CD4nv", "Bmem", "CD8nv"), 
+          dep.var.labels.include = FALSE, add.lines=c(c,d), omit.stat = c("max.rsq","ll","wald","logrank"),keep.stat = c("n","rsq","aic"),dep.var.caption = "Cox proportional hazards 10-year overall survival models",
+          notes = c("Winsorization was used for 2% value of each immune cell profile."),notes.label = "",notes.align = "l")
+```
+
+_______________________________
+
+# immune cell profiles - ratio...
+```{r}
+summary(phenotype3[,25:41] %>% select(-T_cell))
+```
+
+# Univariate
+```{r}
+# 10 year os
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8, data=phenotype3_win) 
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Bcell, data=phenotype3_win) 
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Lymph, data=phenotype3_win) 
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Nv, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ NLR, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ LM_ratio, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Bnv_pct, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4_to_8, data=phenotype3_win)
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4_nv_pct, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4nv_to_mem, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8_nv_pct, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8nv_to_mem, data=phenotype3_win) # violate
+os14 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8mem_Treg, data=phenotype3_win)
+os15 <- coxph(Surv(TenYearSurv, TenDead) ~ Treg_pct, data=phenotype3_win)
+os16 <- coxph(Surv(TenYearSurv, TenDead) ~ Nv_Lymph, data=phenotype3_win)
+cox.zph(os16)
+summary(os16)
+
+# 10 year rfs
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8, data=phenotype3_win) 
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bcell, data=phenotype3_win) 
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Lymph, data=phenotype3_win) 
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Nv, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ NLR, data=phenotype3_win) # violate
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ LM_ratio, data=phenotype3_win)
+os8 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bnv_pct, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4_to_8, data=phenotype3_win)
+os10 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4_nv_pct, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4nv_to_mem, data=phenotype3_win)
+os12 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8_nv_pct, data=phenotype3_win)
+os13 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8nv_to_mem, data=phenotype3_win)
+os14 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8mem_Treg, data=phenotype3_win) # violate
+os15 <- coxph(Surv(TenYearRFS, TenRFS) ~ Treg_pct, data=phenotype3_win)
+os16 <- coxph(Surv(TenYearRFS, TenRFS) ~ Nv_Lymph, data=phenotype3_win)
+cox.zph(os16)
+summary(os16)
+```
+
+# Extended immune cells + NLR OS
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD4, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD8, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bcell, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Lymph, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Nv, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + NLR, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + LM_ratio, data=phenotype3_win) 
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Bnv_pct, data=phenotype3_win)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD4_nv_pct, data=phenotype3_win)
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + CD4nv_to_mem, data=phenotype3_win)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ refage + sex + strata(muscinv) + grade2 + smkstat2 + ImmunoTx + Nv_Lymph, data=phenotype3_win)
+
+cox.zph(os11)
+summary(os11)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[6,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+```
+
+# Extended immune cells + NLR RFS
+```{r}
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD4, data=phenotype3_win)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD8, data=phenotype3_win)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Lymph, data=phenotype3_win)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + Nv, data=phenotype3_win)
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + NLR, data=phenotype3_win)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + LM_ratio, data=phenotype3_win)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ refage + strata(sex) + strata(muscinv) + grade2 + smkstat2 + strata(ImmunoTx) + CD4_nv_pct, data=phenotype3_win)
+
+cox.zph(os7)
+summary(os7)
+
+a = list(os1,os2,os3,os4,os5,os6,os7)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[4,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+```

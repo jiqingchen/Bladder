@@ -1,0 +1,111 @@
+---
+title: "AllBC_outcomes"
+author: "Ji-Qing Chen"
+date: "10/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(survival)
+library(survminer)
+library(stargazer)
+'%!in%' <- Negate('%in%')
+```
+
+# load data
+```{r}
+# phenotype
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+
+# Make age as categorical variable
+AllBC_immune_Age_2 <- AllBC_immune_Age %>%
+                      mutate(Age_cat = ifelse(Age > 65, "High Age", "Low Age"))
+AllBC_immune_Age_2$Age_cat <- factor(AllBC_immune_Age_2$Age_cat, levels = c("High Age","Low Age"), labels = c("High Age","Low Age"))
+AllBC_immune_Age_2$Age_cat = relevel(AllBC_immune_Age_2$Age_cat, ref = "Low Age")
+```
+
+# Summary
+```{r}
+AllBC_immune_Age_3 <- AllBC_immune_Age %>% select(hovath_acc, hannum_acc, pheno_acc)
+summary(AllBC_immune_Age_3)
+```
+
+# check collinearity
+```{r}
+library(rms)
+
+# RFS
+## hovath_acc
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + hovath_acc, data=AllBC_immune_Age)
+vif(os1) # no one has vif larger than 10
+cox.zph(os1) # Age, Sex, muscinv, BCG, violate proportional assumption
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hovath_acc, data=AllBC_immune_Age_2)
+vif(os2) # No one has vif larger than 10
+cox.zph(os2) # No one violate proportional assumption, except Global
+summary(os2)
+
+## hannum_acc
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + hannum_acc, data=AllBC_immune_Age)
+vif(os3) # no one has vif larger than 10
+cox.zph(os3) # Age, Sex, muscinv, BCG, violate proportional assumption
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc, data=AllBC_immune_Age_2)
+vif(os4) # No one has vif larger than 10
+cox.zph(os4) # No one violate proportional assumption, except Global
+summary(os4)
+
+## pheno_acc
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + pheno_acc, data=AllBC_immune_Age)
+vif(os5) # no one has vif larger than 10
+cox.zph(os5) # Age, Sex, muscinv, BCG, violate proportional assumption
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc, data=AllBC_immune_Age_2)
+vif(os6) # No one has vif larger than 10
+cox.zph(os6) # No one violate proportional assumption, except Global
+summary(os6)
+
+# OS
+## hovath_acc
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + hovath_acc, data=AllBC_immune_Age)
+vif(os7) # no one has vif larger than 10
+cox.zph(os7) # muscinv violates proportional assumption
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hovath_acc, data=AllBC_immune_Age)
+vif(os8) 
+cox.zph(os8) # no one violates proportional assumption; not GLOBAL
+summary(os8)
+
+## hannum_acc
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + hannum_acc, data=AllBC_immune_Age)
+vif(os9) # No one has vif larger than 10
+cox.zph(os9) # muscinv violates proportional assumption
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc, data=AllBC_immune_Age)
+vif(os10) # No one has vif larger than 10
+cox.zph(os10) # no one violates proportional assumption
+summary(os10)
+
+## pheno_acc
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + pheno_acc, data=AllBC_immune_Age)
+vif(os11) # No one has vif larger than 10
+cox.zph(os11) # muscinv violates proportional assumption
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc, data=AllBC_immune_Age)
+vif(os12) # No one has vif larger than 10
+cox.zph(os12) # no one violates proportional assumption
+summary(os12)
+```
+
+# univariate model
+```{r}
+# 10 year os
+os13 <- coxph(Surv(TenYearSurv, TenDead) ~ hovath_acc, data=AllBC_immune_Age)
+os14 <- coxph(Surv(TenYearSurv, TenDead) ~ hannum_acc, data=AllBC_immune_Age) 
+os15 <- coxph(Surv(TenYearSurv, TenDead) ~ pheno_acc, data=AllBC_immune_Age)
+cox.zph(os13)
+summary(os15)
+
+# 10 year rfs
+os16 <- coxph(Surv(TenYearRFS, TenRFS) ~ hovath_acc, data=AllBC_immune_Age)
+os17 <- coxph(Surv(TenYearRFS, TenRFS) ~ hannum_acc, data=AllBC_immune_Age) 
+os18 <- coxph(Surv(TenYearRFS, TenRFS) ~ pheno_acc, data=AllBC_immune_Age)
+cox.zph(os16)
+summary(os16)
+```

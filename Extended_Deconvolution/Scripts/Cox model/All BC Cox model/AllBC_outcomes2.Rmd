@@ -1,0 +1,201 @@
+---
+title: "AllBC_outcomes"
+author: "Ji-Qing Chen"
+date: "10/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(survival)
+library(survminer)
+library(stargazer)
+'%!in%' <- Negate('%in%')
+```
+
+# load data
+```{r}
+# phenotype
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+
+# Make age as categorical variable
+AllBC_immune_Age_2 <- AllBC_immune_Age %>%
+                      mutate(Age_cat = ifelse(Age > 65, "High Age", "Low Age"))
+AllBC_immune_Age_2$Age_cat <- factor(AllBC_immune_Age_2$Age_cat, levels = c("High Age","Low Age"), labels = c("High Age","Low Age"))
+AllBC_immune_Age_2$Age_cat = relevel(AllBC_immune_Age_2$Age_cat, ref = "Low Age")
+```
+
+# check collinearity
+```{r}
+library(rms)
+# RFS
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + pheno_acc + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono  + Neu + NK + Treg, data=AllBC_immune_Age)
+vif(os1) # Neu has vif larger than 10
+cox.zph(os1) # Age, Sex, muscinv, BCG, Bnv, violate proportional assumption
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono + NK + Treg, data=AllBC_immune_Age_2)
+vif(os2) # No one has vif larger than 10
+cox.zph(os2) # No one violates proportional assumption
+summary(os2)
+
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + pheno_acc + NLR, data=AllBC_immune_Age)
+vif(os3) # No one has vif larger than 10
+cox.zph(os3) # Age, Sex, muscinv, BCG, and NLR violate proportional assumption
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + NLR, data=AllBC_immune_Age_2)
+vif(os4) # No one has vif larger than 10
+cox.zph(os4) # No one violates proportional assumption, except Global
+summary(os4)
+
+# OS
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + muscinv + Tumor_grade + Smoking_status + BCG + hannum_acc + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono  + Neu + NK + Treg, data=AllBC_immune_Age)
+vif(os5) # Neu has vif larger than 10
+cox.zph(os5) # muscinv, Eos violates proportional assumption
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Bas + Bmem + Bnv + CD4mem + CD4nv + CD8mem + CD8nv + Eos + Mono + NK + Treg, data=AllBC_immune_Age)
+vif(os6) 
+cox.zph(os6) # Eos violates proportional assumption; not GLOBAL
+summary(os6)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + NLR, data=AllBC_immune_Age)
+vif(os7) # No one has vif larger than 10
+cox.zph(os7) # No one violate proportional assumption
+summary(os7)
+```
+
+_________________________________
+
+# univariate model
+```{r}
+# 10 year os
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ NLR, data=AllBC_immune_Age)
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Bas, data=AllBC_immune_Age) 
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Bmem, data=AllBC_immune_Age) 
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Bnv, data=AllBC_immune_Age) 
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4mem, data=AllBC_immune_Age)
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ CD4nv, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8mem, data=AllBC_immune_Age)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ CD8nv, data=AllBC_immune_Age) # violate
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Eos, data=AllBC_immune_Age) # violate
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Mono, data=AllBC_immune_Age)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ NK, data=AllBC_immune_Age)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Treg, data=AllBC_immune_Age)
+os13 <- coxph(Surv(TenYearSurv, TenDead) ~ Neu, data=AllBC_immune_Age)
+cox.zph(os13)
+summary(os13)
+
+# 10 year rfs
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ NLR, data=AllBC_immune_Age) # violate
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bas, data=AllBC_immune_Age) 
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bmem, data=AllBC_immune_Age)
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Bnv, data=AllBC_immune_Age) 
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4mem, data=AllBC_immune_Age)
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD4nv, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8mem, data=AllBC_immune_Age)
+os8 <- coxph(Surv(TenYearRFS, TenRFS) ~ CD8nv, data=AllBC_immune_Age)
+os9 <- coxph(Surv(TenYearRFS, TenRFS) ~ Eos, data=AllBC_immune_Age)
+os10 <- coxph(Surv(TenYearRFS, TenRFS) ~ Mono, data=AllBC_immune_Age)
+os11 <- coxph(Surv(TenYearRFS, TenRFS) ~ NK, data=AllBC_immune_Age)
+os12 <- coxph(Surv(TenYearRFS, TenRFS) ~ Treg, data=AllBC_immune_Age)
+os13 <- coxph(Surv(TenYearRFS, TenRFS) ~ Neu, data=AllBC_immune_Age)
+cox.zph(os1)
+summary(os13)
+```
+_________________________________
+
+# Multivariable models
+
+## OS
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + NLR, data=AllBC_immune_Age) # acc not sig
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Bmem, data=AllBC_immune_Age)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Bnv, data=AllBC_immune_Age) # acc not sig
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + CD4mem, data=AllBC_immune_Age) # acc not sig
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + CD4nv, data=AllBC_immune_Age) # acc not sig
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + CD8mem, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + CD8nv, data=AllBC_immune_Age)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Mono, data=AllBC_immune_Age)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Neu, data=AllBC_immune_Age) # acc not sig
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Treg, data=AllBC_immune_Age)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + NK, data=AllBC_immune_Age)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + hannum_acc + Bas, data=AllBC_immune_Age)
+cox.zph(os1) # No one violate proportional assumption
+summary(os12)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[7,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+```
+
+## RFS
+```{r}
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + NLR, data=AllBC_immune_Age_2) # acc is sig: 0.98 (0.95-0.99)
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + CD4mem, data=AllBC_immune_Age_2) # acc is sig: 0.98 (0.96-0.99)
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + CD4nv, data=AllBC_immune_Age_2) 
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + Mono, data=AllBC_immune_Age_2) 
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + Neu, data=AllBC_immune_Age_2) 
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + Treg, data=AllBC_immune_Age_2)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + hannum_acc + Bas, data=AllBC_immune_Age_2)
+cox.zph(os7)
+summary(os7)
+
+a = list(os1,os2,os3,os4,os5,os6,os7)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[5,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+```
+
+____________________________________________________________________
+
+# Multivariable models - Pheno age acceleration
+
+## OS
+```{r}
+os1 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + NLR, data=AllBC_immune_Age) 
+os2 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Bmem, data=AllBC_immune_Age)
+os3 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Bnv, data=AllBC_immune_Age) 
+os4 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + CD4mem, data=AllBC_immune_Age) 
+os5 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + CD4nv, data=AllBC_immune_Age) 
+os6 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + CD8mem, data=AllBC_immune_Age)
+os7 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + CD8nv, data=AllBC_immune_Age)
+os8 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Mono, data=AllBC_immune_Age)
+os9 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Neu, data=AllBC_immune_Age) 
+os10 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Treg, data=AllBC_immune_Age)
+os11 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + NK, data=AllBC_immune_Age)
+os12 <- coxph(Surv(TenYearSurv, TenDead) ~ Age + Sex + strata(muscinv) + Tumor_grade + Smoking_status + BCG + pheno_acc + Bas, data=AllBC_immune_Age)
+cox.zph(os1) # No one violate proportional assumption
+summary(os1)
+
+a = list(os1,os2,os3,os4,os5,os6,os7,os8,os9,os10,os11,os12)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[7,5]
+  punadj[k]=ff
+}
+padj_OS = p.adjust(punadj,method = 'fdr')
+```
+
+## RFS
+```{r}
+os1 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + NLR, data=AllBC_immune_Age_2) 
+os2 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + CD4mem, data=AllBC_immune_Age_2) 
+os3 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + CD4nv, data=AllBC_immune_Age_2) 
+os4 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + Mono, data=AllBC_immune_Age_2) 
+os5 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + Neu, data=AllBC_immune_Age_2) 
+os6 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + Treg, data=AllBC_immune_Age_2)
+os7 <- coxph(Surv(TenYearRFS, TenRFS) ~ Age_cat + strata(Sex) + strata(muscinv) + Tumor_grade + Smoking_status + strata(BCG) + pheno_acc + Bas, data=AllBC_immune_Age_2)
+cox.zph(os1)
+summary(os7)
+
+a = list(os1,os2,os3,os4,os5,os6,os7)
+punadj = list()
+for(k in 1:length(a)) {
+  ff = summary(a[[k]])$coefficients[5,5]
+  punadj[k]=ff
+}
+padj_RFS = p.adjust(punadj,method = 'fdr')
+```
