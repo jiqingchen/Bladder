@@ -1,0 +1,202 @@
+---
+title: "Untitled"
+author: "Ji-Qing Chen"
+date: "3/7/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+test <- read_csv("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Autoencoder_Kmeans/test.csv")
+```
+
+```{r}
+# cell proportion
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion.RData")
+
+# phenotype
+load("/Users/chenjiqing/Public/bladder cancer/Basic Analysis/data_clean2.RData")
+rm(phenotype1,Recu)
+
+# weird data
+weird = phenotype2[which(phenotype2$ddstat=="dead" & phenotype2$RecurYN=="yes" &
+                         phenotype2$survreftmd<phenotype2$recsurgtmd),]
+# remove weird data
+phenotype3 <- phenotype2 %>%
+              mutate(Age = refage, Sex = sex, Tumor_grade = grade2, 
+                     Smoking_status = smkstat2, BCG = ImmunoTx) %>%
+              dplyr::select(Sample_Name,Age,Sex,Tumor_grade,Smoking_status,
+                            BCG,TenDead, TenYearSurv,muscinv, fiveDead, fiveYearSurv) %>%
+              right_join(Extended2) %>%
+              mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                     Lymph = Bmem + Bnv + NK + T_cell) %>%
+              mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph)) %>%
+              filter(muscinv == "no") %>%
+              dplyr::select(-T_cell,-Lymph,-muscinv)
+phenotype3['Cluster'] <- 0
+phenotype3[2:601,'Cluster'] <- test$`0.000000000000000000e+00`
+phenotype3 <- phenotype3 %>%
+              mutate(Cluster = ifelse(Cluster == 0,'Cluster 2','Cluster 1'))
+table(phenotype3$Cluster)
+
+# Winsorization
+phenotype3_win <- phenotype3 %>%
+         mutate(Bas = ifelse(Bas <= quantile(phenotype3$Bas, probs = 0.98),
+                             Bas,quantile(phenotype3$Bas, probs = 0.98)),
+                Bmem = ifelse(Bmem <= quantile(phenotype3$Bmem, probs = 0.98),
+                              Bmem,quantile(phenotype3$Bmem, probs = 0.98)),
+                Bnv = ifelse(Bnv <= quantile(phenotype3$Bnv, probs = 0.98),
+                             Bnv,quantile(phenotype3$Bnv, probs = 0.98)),
+                CD4mem = ifelse(CD4mem <= quantile(phenotype3$CD4mem, probs = 0.98),
+                                CD4mem,quantile(phenotype3$CD4mem, probs = 0.98)),
+                CD4nv = ifelse(CD4nv <= quantile(phenotype3$CD4nv, probs = 0.98),
+                               CD4nv,quantile(phenotype3$CD4nv, probs = 0.98)),
+                CD8mem = ifelse(CD8mem <= quantile(phenotype3$CD8mem, probs = 0.98),
+                                CD8mem,quantile(phenotype3$CD8mem, probs = 0.98)),
+                CD8nv = ifelse(CD8nv <= quantile(phenotype3$CD8nv, probs = 0.98),
+                               CD8nv,quantile(phenotype3$CD8nv, probs = 0.98)),
+                Eos = ifelse(Eos <= quantile(phenotype3$Eos, probs = 0.98),
+                             Eos,quantile(phenotype3$Eos, probs = 0.98)),
+                Mono = ifelse(Mono <= quantile(phenotype3$Mono, probs = 0.98),
+                              Mono,quantile(phenotype3$Mono, probs = 0.98)),
+                Neu = ifelse(Neu <= quantile(phenotype3$Neu, probs = 0.02),
+                             quantile(phenotype3$Neu, probs = 0.02),Neu),
+                NK = ifelse(NK <= quantile(phenotype3$NK, probs = 0.98),
+                            NK,quantile(phenotype3$NK, probs = 0.98)),
+                Treg = ifelse(Treg <= quantile(phenotype3$Treg, probs = 0.98),
+                              Treg,quantile(phenotype3$Treg, probs = 0.98)),
+                NLR = ifelse(NLR <= quantile(phenotype3$NLR, probs = 0.98),
+                             NLR,quantile(phenotype3$NLR, probs = 0.98))) 
+
+rm(phenotype2,weird,Extended2)
+
+
+```
+
+# survival
+```{r}
+library(survival)
+library(survminer)
+
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Cluster, data = phenotype3_win)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year Overall survival probability",
+  ylim = c(0.5, 1),
+  legend = c(0.2,0.2) ,legend.title = "", 
+  legend.labs = c("Cluster 1","Cluster 2"),
+  palette = "nejm",
+  conf.int = T,
+  surv.median.line = "hv"
+  )
+surv_median(fit_10y)
+survdiff(Surv(TenYearSurv, TenDead) ~ Cluster, data = phenotype3_win)
+```
+
+# Function
+```{r}
+Plot_Cell_Type <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = Cluster, 
+                                      color = Cluster)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = Cluster), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Cell Type Percent", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "bottom",
+                          text=element_text(size=12, face = "bold"),
+                          plot.margin = unit(c(6,0,6,0), "pt")) + 
+                  # legend.position controls where is legend
+                      scale_y_continuous(labels = scales::percent_format(
+                                       accuracy = 1)) 
+                return(PLOT)
+                
+}
+
+NLRPlot <- function(DF, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage, 
+                                      by = Cluster, 
+                                      color = Cluster)) +
+                      geom_boxplot(position = position_dodge(width = 0.95),
+                                   #outlier.shape = NA, 
+                                   #outlier.colour = NA, 
+                                   outlier.size = 0.25) +
+                      geom_point(position = position_jitterdodge(
+                                 dodge.width= 0.95,
+                                 jitter.width = 0.25), 
+                                 alpha=0.5,
+                                 size = 0.1) +
+                      stat_compare_means(aes(group = Cluster), 
+                                        label = "p.format",
+                                        label.x = P_X, 
+                                        label.y = P_Y, 
+                                        size = 3.6, 
+                                        method = "wilcox.test") +
+                      labs(x = "", y = "Ratio", 
+                         colour = "") +
+                      theme_classic() +
+                      scale_color_nejm() +
+                      theme(legend.position = "none")
+                return(PLOT)
+}
+```
+
+# Plot (Peripheral Blood)
+```{r}
+Estimate1 <- phenotype3 %>%
+             dplyr::select(Cluster, Bas, Bmem, Bnv, 
+                           Eos, Mono, NK, Treg) %>%
+             gather(key = Cell_Type, value = Percentage,-Cluster) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot = Estimate1 %>%
+                 Plot_Cell_Type(DF = ., P_X = 0, P_Y = .22)
+
+Estimate2 <- phenotype3 %>%
+             dplyr::select(Cluster, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+             gather(key = Cell_Type, value = Percentage,-Cluster) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot2 = Estimate2 %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = .4)
+
+Estimate3 <- phenotype3 %>%
+             dplyr::select(Cluster, Neu) %>%
+             gather(key = Cell_Type, value = Percentage, -Cluster) %>%
+             mutate(Percentage = Percentage/100)
+Cell_Type_Plot3 = Estimate3 %>%
+                  Plot_Cell_Type(DF = ., P_X = 0, P_Y = 1)
+
+Estimate4 <- phenotype3 %>%
+             dplyr::select( Cluster, NLR) %>%
+             gather(key = Cell_Type, value = Percentage,-Cluster)
+Cell_Type_Plot4 = Estimate4 %>%
+                  NLRPlot(DF = ., P_X = 0, P_Y = 35)
+
+# save
+Row1 = plot_grid(Cell_Type_Plot, ncol = 1)
+Row2 = plot_grid(Cell_Type_Plot3,Cell_Type_Plot2, Cell_Type_Plot4, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1.1,1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Autoencoder_Kmeans/NMIBC_Autoencoder_KMeans_Blood.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
