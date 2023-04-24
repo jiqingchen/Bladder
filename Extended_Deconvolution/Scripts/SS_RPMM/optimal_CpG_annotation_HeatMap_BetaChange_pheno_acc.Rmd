@@ -1,0 +1,139 @@
+---
+title: "Untitled"
+author: "Ji-Qing Chen"
+date: "2022-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+'%!in%' <- Negate('%in%')
+
+library(pheatmap)
+library(RColorBrewer)
+```
+
+# Load data
+```{r}
+# Beta
+beta <- readRDS("/Users/chenjiqing/Public/bladder cancer/raw data/AllBC_Combat_Betas2.rds")
+dim(beta)
+
+# SS-RPMM results
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_3FoldCross_pheno_acc.RData")
+```
+
+# CpGs selection
+```{r}
+optimal_CpG <- rownames_to_column(BLCR_OS_Scores, var = "CpG")
+optimal_CpG <- optimal_CpG[1:23,]
+
+# Sample Name
+sample_name <- as.character(rownames(BLCR_classed_cellprop))
+beta <- beta[,sample_name]
+
+# Select betas of CpG
+CpG_name <- as.character(optimal_CpG$CpG)
+beta_for23CpGs <- beta[CpG_name,]
+rm(beta)
+```
+
+# Calculate beta means of optimal CpGs in rR and rL
+```{r}
+rR_name <- as.character(rownames(BLCR_classed_cellprop %>% filter(Class == "rR")))
+rL_name <- as.character(rownames(BLCR_classed_cellprop %>% filter(Class == "rL")))
+beta_for23CpGs_rR <- beta_for23CpGs[,rR_name]
+beta_for23CpGs_rL <- beta_for23CpGs[,rL_name]
+beta_for23CpGs_Mean_rR <- beta_for23CpGs_rR %>%
+                          as.data.frame() %>%
+                          mutate(rR = rowMeans(beta_for23CpGs_rR)) %>%
+                          rownames_to_column(., var = "CpG") %>%
+                          select(CpG,rR)
+beta_for23CpGs_Mean_rL <- beta_for23CpGs_rL %>%
+                          as.data.frame() %>%
+                          mutate(rL = rowMeans(beta_for23CpGs_rL)) %>%
+                          rownames_to_column(., var = "CpG") %>%
+                          select(CpG,rL)
+beta_for23CpGs_Mean <- beta_for23CpGs_Mean_rL %>%
+                       left_join(beta_for23CpGs_Mean_rR) %>%
+                       mutate(delta_beta = rR - rL)
+beta_for23CpGs_Mean_matrix <- beta_for23CpGs_Mean_rL %>%
+                              left_join(beta_for23CpGs_Mean_rR) %>%
+                              column_to_rownames(., var = "CpG") %>%
+                              as.matrix()
+```
+
+# Annotation for 23 CpGs
+```{r}
+library(minfi)
+annEPIC <- getAnnotation("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+annEPIC <- as.data.frame(annEPIC) %>% rownames_to_column(var = "CpG")
+
+ann <- annEPIC %>% 
+       select(CpG,Phantom5_Enhancers,DNase_Hypersensitivity_Evidence_Count,
+              Relation_to_Island,chr,UCSC_RefGene_Name,UCSC_RefGene_Group) %>%
+       mutate(DHS = ifelse(DNase_Hypersensitivity_Evidence_Count == "","No","Yes"),
+              Enhancer = ifelse(Phantom5_Enhancers == "","No","Yes")) %>%
+       select(CpG,DHS,Enhancer,Relation_to_Island,
+              chr,UCSC_RefGene_Name,UCSC_RefGene_Group)
+
+optimal_CpG_annotation <- optimal_CpG %>% 
+                          left_join(., ann) %>%
+                          left_join(., beta_for23CpGs_Mean) %>%
+                          select(-AbsCoxScore, -rL, -rR)
+
+write_csv(optimal_CpG_annotation ,"/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/optimal_23CpG_annotation_pheno_acc.csv")
+```
+
+# Save heatmap function
+```{r}
+save_pheatmap_png <- function(x, filename, width=1400, height=1600, res = 150) {
+  png(filename, width = width, height = height, res = res)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+```
+
+# Heatmap
+```{r}
+mat_colors <- list(group = brewer.pal(2, "Set1"))
+
+# For mean beta in train and test No row annotation
+Top23_heat_mean <- pheatmap(
+  beta_for23CpGs_Mean_matrix,
+  show_rownames = F, 
+  show_colnames = T,
+  annotation_colors = mat_colors,
+  color = colorRampPalette(c("yellow", "blue"))(100), 
+  border_color = NA,
+  fontsize = 10, 
+  fontsize_col = 10
+  #main = "Mean Beta Values of Optimal 23 CpGs used in SS-RPMM [Whole NMIBC]"
+)
+
+save_pheatmap_png(Top23_heat_mean, "Top23_heat_mean_noRowAnnot_pheno_acc")
+```
+
+# Compare with previous paper
+```{r}
+# Previous paper CpG
+load("/Users/chenjiqing/Public/bladder cancer/EWAS/RFS/EWAS_strata_winsor.RData")
+
+DMPs_0.005_cell <- DMPs_cell$table %>%
+                   rownames_to_column(., var = "CpG") %>%
+                   filter(p.value < 0.005)
+
+DMPs_0.005_cell2 <- DMPs_0.005_cell %>%
+                    select(CpG, estimate, p.value, p.adjust) %>%
+                    left_join(.,ann)
+
+# Find Common CpGs
+common_CpG <- intersect(DMPs_0.005_cell2$CpG,optimal_CpG$CpG)
+common_CpG <- optimal_CpG_annotation %>% filter(CpG %in% common_CpG)
+write_csv(common_CpG ,"/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Manuscript/Figures and Tables/Additional File 2_pheno_acc.csv")
+```
+

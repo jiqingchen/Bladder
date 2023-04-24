@@ -1,0 +1,670 @@
+---
+title: "SS_RPMM_OS_Hannum_acc"
+author: "Ji-Qing Chen"
+date: "2/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RPMM)
+library(survival)
+library(survminer)
+library(nlme)
+library(ggsci)
+library(matrixStats)
+
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+source("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/SS_RPMM_function_limit_to2.R")
+
+'%!in%' <- Negate('%in%')
+```
+
+# load data
+```{r}
+# beta
+beta <- readRDS("/Users/chenjiqing/Public/bladder cancer/raw data/AllBC_Combat_Betas2.rds")
+dim(beta)
+
+# phenotype
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/Age_acc/Ctic_Project/AllBC_Age_acc2.RData") # immune cell already winsorized
+```
+
+# Exclude unnecessary CpGs
+```{r}
+annot <- readRDS("/Users/chenjiqing/Public/bladder cancer/GSEA and LOLA and GenomicContext/EPIC.hg19.manifest.rds")
+annot<- as.data.frame(annot) %>% rownames_to_column(.)
+table(annot$MASK_general)
+row_contain_rs <- annot %>% filter(grepl("rs", .$rowname))
+row_contain_ch <- annot %>% filter(grepl("ch", .$rowname))
+annot_filtered <- annot %>% 
+                  filter(rowname %!in% row_contain_rs$rowname) %>%
+                  filter(rowname %!in% row_contain_ch$rowname) %>%
+                  filter(MASK_general == "FALSE") %>%
+                  filter(seqnames != "chrX") %>% 
+                  filter(seqnames != "chrY")
+rm(row_contain_rs,row_contain_ch)
+
+beta2 <- as.data.frame(beta) %>% rownames_to_column(.)
+rm(beta,annot)
+beta.filtered <- beta2 %>% 
+                 filter(rowname %in% annot_filtered$rowname)
+rm(beta2,annot_filtered)
+beta.filtered <- beta.filtered %>% column_to_rownames(., var = "rowname") %>% as.matrix(.)
+dim(beta.filtered) # 726856 CpGs would be input
+```
+
+# Exclude unnecessary CpGs (New)
+```{r}
+test <- read.table(file = '/Users/chenjiqing/Public/bladder cancer/Tumor FFPE/First batch/Analysis/Cluster/EPIC.hg19.manifest.tsv', sep = '\t', header = TRUE)
+row_contain_rs <- test %>% filter(grepl("rs", .$probeID))
+row_contain_ch <- test %>% filter(grepl("ch", .$probeID))
+annot_filtered <- test %>% 
+                  filter(probeID %!in% row_contain_rs$probeID) %>%
+                  filter(probeID %!in% row_contain_ch$probeID) %>%
+                  filter(MASK_general == "FALSE") %>%
+                  filter(CpG_chrm != "chrX") %>% 
+                  filter(CpG_chrm != "chrY")
+```
+
+# clean data
+```{r}
+# 10% with the most variability in methylation beta value across all samples.
+k <- nrow(beta.filtered)*0.1
+sele <- order(rowVars(beta.filtered), decreasing=TRUE)[1:k]
+beta2 <- beta.filtered[sele, ]
+rm(beta.filtered)
+
+NMIBC_immune_Age <- AllBC_immune_Age %>% filter(muscinv == "no")
+
+a <- as.character(NMIBC_immune_Age$Sample_ID)
+NMIBC_immune_Age <- NMIBC_immune_Age %>% column_to_rownames(., var = 'Sample_ID')
+beta_final <- beta2[,a]
+rm(beta2)
+beta_final <- t(beta_final)
+View(beta_final[1:5,1:5])
+
+P1 = dim(NMIBC_immune_Age)[2]
+
+```
+
+# STEP 1: Randomly split the full data into training and testing sets.
+```{r}
+BLCR_Split = TrainTestSplit(beta_final, NMIBC_immune_Age, Strat = "TenDead", seed =1, propTrain = 2/3)
+
+BLCR_TrainingData = BLCR_Split[[1]]
+BLCR_TestingData = BLCR_Split[[2]]
+
+# Extract the beta values and the covariate values from the training and testing sets from previous STEP.
+BLCR_Training_Betas = BLCR_TrainingData[,-(1:P1)]
+BLCR_Training_Covariates = BLCR_TrainingData[,(1:P1)]
+
+BLCR_Testing_Betas = BLCR_TestingData[,-(1:P1)]
+BLCR_Testing_Covariates = BLCR_TestingData[,(1:P1)]
+
+rm(BLCR_Split, BLCR_TrainingData, BLCR_TestingData)
+```
+
+# STEP 2: Identify the CpG loci that are most associated with the clinical variable of interest using only the training data. If the clinical variable of interest is time to event data (i.e. survival or disease recurrence) then use the function called MostImpCpGsSurvival.
+```{r}
+BLCR_OS_Scores = MostImpCpGsSurvival(Y = BLCR_Training_Betas,
+          covariates = BLCR_Training_Covariates, times = "TenYearSurv", censor = "TenDead",
+          terms = c("Age","hannum_acc", "Sex", "Tumor_grade", "Smoking_status", "BCG"
+                    ,"Bmem","CD4mem","CD8mem","CD8nv","Neu","Treg","NK","Bas"), 
+          factors = c("Sex", "Tumor_grade", "Smoking_status", "BCG"))
+
+```
+
+# STEP 3a: Determine the number of high ranking CpG loci from the previous step to be used in fitting RPMM to the Training data.
+```{r}
+BLCRXvalidationResults4 = NestedXValidationSurvival(Y =  BLCR_Training_Betas, 
+                                                   covariates = BLCR_Training_Covariates,
+                                                   CoxScores = BLCR_OS_Scores, 
+                                                   times = "TenYearSurv", 
+                                                   censor = "TenDead", 
+                                                   mrange =c(5,50),
+                                                   method = "beta", 
+                                                   L = 5, seeds = 1:5)
+```
+
+# STEP 3b:The selection of M can be based on what value of m yeilded the lowest median p-value as indicated in the HNSCCXvalidationResults and MesoXvalidationResults objects.
+```{r}
+# a better approach to select M would be to smooth the BLCRXvalidationResults object and chose the value of M where the smooth function of median p-values attains it's minimum value
+mrange = 1:46
+loessCurve = loess.smooth(mrange, BLCRXvalidationResults4, degree = 14)
+MOpt_Bladder = subset(data.frame(loessCurve$x, loessCurve$y), loessCurve$y ==
+min(loessCurve$y))[[1]]
+par(mar = c(5,5,4,2))
+plot(mrange, BLCRXvalidationResults4, cex = 0.75, xlab = "Number of top ranking loci (M)",
+ylab = "Median P-value", cex.lab = 2, cex.axis = 1.5)
+lines(loessCurve$x, loessCurve$y, lwd = 5)
+abline(v = MOpt_Bladder, col = "red", lwd = 2, lty = "dashed")
+```
+
+# STEP 4: The final step of SS-RPMM is to fit an RPMM to the Training Data using the M CpG loci with the largest absolute T-Score, where M is determined based on the results from step 3.
+```{r}
+# Based on this solution, we want to predict the methylation class membership for the observations in the test data.  We achieve this using the PredMethClasses function.
+BLCRMethClassesTesting = PredMethClasses(Ytrain = BLCR_Training_Betas,
+                                         Ytest = BLCR_Testing_Betas, 
+                                         Scores = BLCR_OS_Scores, 
+                                         M = 41, 
+                                         method = "beta")
+
+BLCRMethClassesTraining = PredMethClasses(Ytrain = BLCR_Training_Betas,
+                                         Ytest = BLCR_Training_Betas, 
+                                         Scores = BLCR_OS_Scores, 
+                                         M = 41, 
+                                         method = "beta")
+
+BLCR_classed1 <- BLCR_Testing_Covariates %>% mutate(Class = BLCRMethClassesTesting, SplitSet = "Test")
+BLCR_classed2 <- BLCR_Training_Covariates %>% mutate(Class = BLCRMethClassesTraining, SplitSet = "Train")
+BLCR_classed_cellprop <- rbind(BLCR_classed1,BLCR_classed2)
+save(BLCR_OS_Scores, BLCRXvalidationResults4, BLCR_classed_cellprop, file = "/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+```
+
+## POST SS-RPMM ANALYSES
+
+# Following the prediction of the methylation classes in the Testing data, we now want to determine whether or not the methylation classes we've identified are clinically relevant.
+```{r}
+# We do this by testing the association between the predicted methylation classes in the test data and the clinical outcome of interest
+
+# Kaplan-Meier survival plot by predicted methylation class in the testing data
+plot(survfit(Surv(TenYearSurv,TenDead)~ BLCRMethClassesTesting, data = BLCR_Testing_Covariates),
+      col = rainbow(length(levels(BLCRMethClassesTesting))),
+      xlab = "Time (months)", ylab = "Probability of Survival", cex.lab = 1.5,
+      cex.axis = 1.2, lwd = 2)
+legend("bottomleft", legend = levels(BLCRMethClassesTesting),
+       col = rainbow(length(levels(BLCRMethClassesTesting))),
+       cex = 1.2, lty = 1, lwd = 2)
+  
+# Test whether or not the predicted methylation classes in the test data are associated with survival time (i.e. log-rank test).
+survdiff(Surv(TenYearSurv,TenDead)~BLCRMethClassesTesting, data = BLCR_Testing_Covariates)
+
+# Test whether or not the predicted methylation classes in the test data are associated with survival time, controlling for confounders.
+CoxModBLCA = coxph(Surv(TenYearSurv,TenDead)~BLCRMethClassesTesting + Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Bnv + CD4mem + CD4nv + CD8mem + NK + Neu , data = BLCR_Testing_Covariates)
+summary(CoxModBLCA)
+
+
+# Load
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+# Re-plot KM plot
+Test_data <- BLCR_classed_cellprop %>%
+             filter(SplitSet == "Test")
+
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Class, data = Test_data)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival, %",
+  #ylim = c(0.3,1),
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("rL","rR"),
+  risk.table = TRUE, # For JAMA
+  palette = "jama",
+  #conf.int = T,
+  #surv.median.line = "hv"
+  risk.table.y.text.col=F, # For JAMA
+  risk.table.title="No. at risk", # For JAMA
+  risk.table.height = 0.18
+  )
+
+# Adjust y scale and table for JAMA
+OS_10y$plot <- OS_10y$plot +
+               scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+               theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                     legend.position=c(0.08, 0.2),
+                     legend.background = element_rect(linetype="solid", colour ="black"),
+                     legend.title = element_blank(),
+                     legend.text = element_text(size = 8),
+                     axis.title.y = element_text(vjust = -3,margin = margin(r = 15)))
+OS_10y$table <- OS_10y$table + 
+                theme_cleantable() +
+                theme(plot.title = element_text(hjust = -0.125,size=11))
+
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Class, data = Test_data)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ Class, data=Test_data))
+OS_10y$plot <- OS_10y$plot + 
+               annotate("text", x = 40, y = 0.3, label = " rR (referent group: rL), P = 1.96E-6; \n HR = 0.26 (95% CI, = 0.14-0.47)") +
+               theme(plot.title = element_text(size = 5))
+# size 5x8
+```
+
+# For whole data
+```{r}
+# Kaplan-Meier survival plot by predicted methylation class in the testing data
+plot(survfit(Surv(TenYearSurv,TenDead)~ Class, data = BLCR_classed_cellprop),
+      col = rainbow(length(levels(BLCR_classed_cellprop$Class))),
+      xlab = "Time (months)", ylab = "Probability of Survival", cex.lab = 1.5,
+      cex.axis = 1.2, lwd = 2)
+legend("bottomright", legend = levels(BLCR_classed_cellprop$Class),
+       col = rainbow(length(levels(BLCR_classed_cellprop$Class))),
+       cex = 1.2, lty = 1, lwd = 2)
+  
+# Test whether or not the predicted methylation classes in the test data are associated with survival time (i.e. log-rank test).
+survdiff(Surv(TenYearSurv,TenDead)~Class, data = BLCR_classed_cellprop)
+
+# Test whether or not the predicted methylation classes in the test data are associated with survival time, controlling for confounders.
+CoxModBLCA = coxph(Surv(TenYearSurv,TenDead)~Class + Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG + Bnv + CD4mem + CD4nv + CD8mem + NK + Neu , data = BLCR_classed_cellprop)
+summary(CoxModBLCA)
+
+# Load
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+# Re-plot KM plot
+fit_10y = survfit(Surv(TenYearSurv, TenDead) ~ Class, data = BLCR_classed_cellprop)
+OS_10y <- ggsurvplot(
+  fit_10y,
+  xlab = "Months", 
+  ylab = "10-year overall survival, %",
+  #ylim = c(0.3,1),
+  legend = "top" ,legend.title = "", 
+  legend.labs = c("rL","rR"),
+  risk.table = TRUE, # For JAMA
+  palette = "jama",
+  #conf.int = T,
+  #surv.median.line = "hv"
+  risk.table.y.text.col=F, # For JAMA
+  risk.table.title="No. at risk", # For JAMA
+  risk.table.height = 0.18
+  )
+
+# Adjust y scale and table for JAMA
+OS_10y$plot <- OS_10y$plot +
+               scale_y_continuous(breaks = seq(0,1,by=0.2), labels = seq(0,100,by=20)) +
+               theme(panel.grid.major.y = element_line(color = "grey",linetype = 1),
+                     legend.position=c(0.08, 0.2),
+                     legend.background = element_rect(linetype="solid", colour ="black"),
+                     legend.title = element_blank(),
+                     legend.text = element_text(size = 8),
+                     axis.title.y = element_text(vjust = -3,margin = margin(r = 15)))
+OS_10y$table <- OS_10y$table + 
+                theme_cleantable() +
+                theme(plot.title = element_text(hjust = -0.125,size=11))
+
+
+surv_median(fit_10y)
+surv_diff <- survdiff(Surv(TenYearSurv, TenDead) ~ Class, data = BLCR_classed_cellprop)
+pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = FALSE) # log-rank test p value
+summary(os <- coxph(Surv(TenYearSurv, TenDead) ~ Class, data=BLCR_classed_cellprop))
+OS_10y$plot <- OS_10y$plot + 
+               annotate("text", x = 40, y = 0.3, label = " rR (referent group: rL), P = 2.37E-13; \n HR = 0.31 (95% CI, = 0.23-0.44)") +
+               theme(plot.title = element_text(size = 10))
+```
+
+# Cox not include immune
+```{r}
+CoxModBLCA = coxph(Surv(TenYearSurv,TenDead)~BLCRMethClassesTesting + Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG, data = BLCR_Testing_Covariates)
+summary(CoxModBLCA)
+
+CoxModBLCA = coxph(Surv(TenYearSurv,TenDead)~Class + Age + hannum_acc + Sex + Tumor_grade + Smoking_status + BCG, data = BLCR_classed_cellprop)
+summary(CoxModBLCA)
+```
+
+______________________________________________________________
+# Finding optimal CpGs
+```{r}
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+
+MOpt_Bladder+5-1 # 41 CpGs
+
+optimal_CpG <- rownames_to_column(BLCR_OS_Scores, var = "CpG")
+optimal_CpG <- optimal_CpG[1:41,]
+
+# add annotation
+annEPIC <- getAnnotation("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+annEPIC <- as.data.frame(annEPIC) %>% rownames_to_column(var = "CpG")
+ann <- annEPIC %>% 
+       select(CpG,Phantom5_Enhancers,DNase_Hypersensitivity_Evidence_Count,
+              Relation_to_Island,chr,UCSC_RefGene_Name,UCSC_RefGene_Group) %>%
+       mutate(DHS = ifelse(DNase_Hypersensitivity_Evidence_Count == "","No","Yes"),
+              Enhancer = ifelse(Phantom5_Enhancers == "","No","Yes")) %>%
+       select(CpG,DHS,Enhancer,Relation_to_Island,
+              chr,UCSC_RefGene_Name,UCSC_RefGene_Group)
+
+optimal_CpG <- optimal_CpG %>% left_join(., ann)
+
+# Previous paper CpG
+load("/Users/chenjiqing/Public/bladder cancer/EWAS/RFS/EWAS_strata_winsor.RData")
+
+DMPs_0.005_cell <- DMPs_cell$table %>%
+                   rownames_to_column(., var = "CpG") %>%
+                   filter(p.value < 0.005)
+
+DMPs_0.005_cell2 <- DMPs_0.005_cell %>%
+                    select(CpG, estimate, p.value, p.adjust) %>%
+                    left_join(.,ann)
+
+# Find Common CpGs
+common_CpG <- intersect(DMPs_0.005_cell2$CpG,optimal_CpG$CpG)
+common_CpG <- optimal_CpG %>% filter(CpG %in% common_CpG)
+```
+
+# Heatmap for 41 methylation level
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+#beta <- readRDS("/Users/chenjiqing/Public/bladder cancer/raw data/AllBC_Combat_Betas2.rds")
+dim(beta)
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+
+# Target CpG
+MOpt_Bladder+5-1 # 41 CpGs
+
+optimal_CpG <- rownames_to_column(BLCR_OS_Scores, var = "CpG")
+optimal_CpG <- optimal_CpG[1:41,]
+
+a <- as.character(rownames(BLCR_classed_cellprop))
+beta <- beta[,a]
+b <- as.character(optimal_CpG$CpG)
+beta_for41CpGs <- beta[b,]
+e <- as.character(rownames(BLCR_classed_cellprop %>% filter(Class == "rR")))
+f <- as.character(rownames(BLCR_classed_cellprop %>% filter(Class == "rL")))
+beta_for41CpGs_rR <- beta_for41CpGs[,e]
+beta_for41CpGs_rL <- beta_for41CpGs[,f]
+beta_for41CpGs_Mean_rR <- beta_for41CpGs_rR %>%
+                          as.data.frame() %>%
+                          mutate(rR = rowMeans(beta_for41CpGs_rR)) %>%
+                          rownames_to_column(., var = "CpG") %>%
+                          select(CpG,rR)
+beta_for41CpGs_Mean_rL <- beta_for41CpGs_rL %>%
+                          as.data.frame() %>%
+                          mutate(rL = rowMeans(beta_for41CpGs_rL)) %>%
+                          rownames_to_column(., var = "CpG") %>%
+                          select(CpG,rL)
+beta_for41CpGs_Mean <- beta_for41CpGs_Mean_rL %>%
+                       left_join(beta_for41CpGs_Mean_rR) %>%
+                       column_to_rownames(., var = "CpG") %>%
+                       as.matrix()
+
+library(minfi)
+annEPIC <- getAnnotation("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+annEPIC <- as.data.frame(annEPIC) %>% rownames_to_column(var = "CpG")
+
+# Find 41 CpGs
+annEPIC_41 <- annEPIC %>% 
+              filter(Name %in% b) %>%
+              select(rowname,Phantom5_Enhancers,DNase_Hypersensitivity_Evidence_Count,Relation_to_Island) %>%
+              mutate(DHS = ifelse(DNase_Hypersensitivity_Evidence_Count == "","No","Yes"),
+              Enhancer = ifelse(Phantom5_Enhancers == "","No","Yes")) %>%
+              select(rowname,DHS,Enhancer,Relation_to_Island)
+colnames(annEPIC_41) <- c("CpG","DHS","Enhancer","Relation_to_Island")
+annEPIC_41 <- column_to_rownames(annEPIC_41, var = "CpG")
+
+# Annotation for 41 CpGs
+ann <- annEPIC %>% 
+       filter(Name %in% b) %>%
+       select(CpG,Phantom5_Enhancers,DNase_Hypersensitivity_Evidence_Count,
+              Relation_to_Island,chr,UCSC_RefGene_Name,UCSC_RefGene_Group) %>%
+       mutate(DHS = ifelse(DNase_Hypersensitivity_Evidence_Count == "","No","Yes"),
+              Enhancer = ifelse(Phantom5_Enhancers == "","No","Yes")) %>%
+       select(CpG,DHS,Enhancer,Relation_to_Island,
+              chr,UCSC_RefGene_Name,UCSC_RefGene_Group)
+optimal_CpG_annotation <- optimal_CpG %>% left_join(., ann) %>% select(-AbsCoxScore)
+#write_csv(optimal_CpG_annotation ,"/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/optimal_41CpG_annotation.csv")
+
+# phenotype
+phenotype <- BLCR_classed_cellprop %>%
+             mutate(Age = ifelse(Age <= 65, "Age <= 65", "Age > 65"),
+                    Hannum_avv = ifelse(hannum_acc <= median(hannum_acc), "Low Age_acc", "High Age_acc"),
+                    NLR = ifelse(NLR <= median(NLR), "Low NLR", "High NLR"),
+                    BCG = ifelse(BCG == "With Immuno","With BCG","Without BCG"),
+                    Event = ifelse(TenDead == 1, "Deceased","Alive")) %>%
+             select(Age,Hannum_avv,Sex,Tumor_grade,Smoking_status,BCG,Event,NLR,Class,SplitSet)
+
+# For testing set
+phenotype_test <- phenotype %>%
+                  filter(SplitSet=="Test") %>%
+                  select(-SplitSet)
+c <- as.character(rownames(phenotype_test))
+beta_for41CpGs_test <- beta_for41CpGs[,c]
+```
+
+# Save heatmap function
+```{r}
+save_pheatmap_png <- function(x, filename, width=1400, height=1600, res = 150) {
+  png(filename, width = width, height = height, res = res)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+```
+
+# Heatmap
+```{r}
+mat_colors <- list(group = brewer.pal(2, "Set1"))
+
+# For mean beta in train and test No row annotation
+Top41_heat_mean <- pheatmap(
+  beta_for41CpGs_Mean,
+  show_rownames = F, 
+  show_colnames = T,
+  #cluster_rows = F,
+  #annotation_col = phenotype_test,
+  #annotation_row = annEPIC_37,
+  annotation_colors = mat_colors,
+  color = colorRampPalette(c("yellow", "blue"))(100), 
+  border_color = NA,
+  fontsize = 10, 
+  fontsize_col = 10,
+  main = "Mean Beta Values of Optimal 41 CpGs used in SS-RPMM [Whole NMIBC]"
+)
+
+save_pheatmap_png(Top41_heat_mean, "Top41_heat_mean_noRowAnnot")
+```
+
+______________________________________________________________
+
+# immune cell type proportion difference
+```{r}
+# cell proportion
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Bladder_Extended_cell_proportion2.RData")
+load("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/BLCR_classed_cellprop_5FoldCross.RData")
+
+NMIBC_immune <- BLCR_classed_cellprop %>% 
+                rownames_to_column(., var = 'Sample_Name') %>% 
+                select(Sample_Name, Class) %>%
+                left_join(Extended2) %>%
+                mutate(T_cell = CD4mem + CD4nv + CD8mem + CD8nv + Treg, # not show this one
+                       Lymph = Bmem + Bnv + NK + T_cell) %>%
+                mutate(NLR = ifelse(Lymph == 0,Neu/0.01, Neu/Lymph)) %>%
+                select(-T_cell,-Lymph)
+```
+
+# Function
+```{r}
+# Plot Cell Type
+Plot_Cell_Type <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Cell_Type, 
+                                      y = Percentage,
+                                      #color = Class,
+                                      fill = Class,
+                                      by = Class)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, 
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1) +
+                      #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                       #                                          jitter.width = 0.25), 
+                        #         alpha=0.5,size = 0.1) +
+                      stat_compare_means(aes(group = Class), 
+                                         label = "p.format", 
+                                         label.x = P_X, label.y = P_Y, 
+                                         size = 3.4, 
+                                         method = "wilcox.test") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "bottom", # legend.position controls where is legend
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            legend.title = element_blank(), # For JAMA
+                            text=element_text(size=12, 
+                                              face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt")) + 
+                     scale_y_continuous(labels = scales::percent_format(accuracy = 1)) 
+                return(PLOT)
+}
+
+NeuPlot <- function(DF){
+            ggplot(DF, aes(x = "Neu",
+                           y = Neu,
+                           #color = Class,
+                           fill = Class,
+                           by = Class)) +
+            stat_boxplot(geom = "errorbar", width = 0.2,
+                         position = position_dodge(width = 0.95)) + # For JAMA
+            geom_boxplot(position = position_dodge(width = 0.95), 
+                         outlier.shape = 1, 
+                         #outlier.colour = NA, 
+                         outlier.size = 1.5) + 
+            #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+             #                                          jitter.width = 0.25),
+              #         alpha=0.5,size = 0.1) + 
+            stat_compare_means(aes(group = Class), 
+                               label = "p.format", 
+                               label.x = 0, label.y = 1, 
+                               size = 3.4, 
+                               method = "wilcox.test") +
+            labs(x = "", y = "Cell Type Percent") +
+            theme_classic() +
+            #scale_color_nejm() +
+            scale_fill_jama() +
+            theme(legend.position = "none", # legend.position controls where is legend
+                  panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                  text=element_text(size=12,face = "bold"),
+                  plot.margin = unit(c(6,0,6,0), "pt")) +
+            scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+}
+
+# Plot Cell Type
+Cell_Ratio_Plot <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = "NLR", 
+                                      y = NLR, 
+                                      #color = Class,
+                                      fill = Class,
+                                      by = Class)) +
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, 
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.5) +
+                       #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                        #                               jitter.width = 0.25),
+                         #        alpha=0.5,size = 0.1) +
+                       stat_compare_means(aes(group = Class), 
+                                          label = "p.format", 
+                                          label.x = P_X, 
+                                          label.y = P_Y, 
+                                          size = 3.4, 
+                                          method = "wilcox.test") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "none",
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            text=element_text(size=12, face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt"), 
+                            axis.text.x = element_text(size = 7))
+                return(PLOT)
+                
+        }
+```
+
+# plot
+```{r}
+Estimate <- NMIBC_immune %>%
+            dplyr::select(Class, Bas, Bmem, Bnv, Eos, Mono, NK, Treg) %>%
+            gather(key = Cell_Type, value = Percentage, -Class) %>%
+            mutate(Percentage = Percentage/100)
+plot1 = Plot_Cell_Type(Estimate, YLab = "Cell Type Percent", P_X = 0, P_Y = .21)
+
+Estimate2 <- NMIBC_immune %>%
+             dplyr::select(Class, CD4mem, CD4nv, CD8mem, CD8nv) %>%
+             gather(key = Cell_Type, value = Percentage, -Class) %>%
+             mutate(Percentage = Percentage/100)
+plot2 = Plot_Cell_Type(Estimate2, YLab = "Cell Type Percent", P_X = 0, P_Y = .4)
+
+PlotNeu <- NMIBC_immune %>% mutate(Neu = Neu/100) %>% NeuPlot()
+
+Ratios <- NMIBC_immune %>%
+          dplyr::select(Class, NLR)
+PlotNLR <- Cell_Ratio_Plot(Ratios,YLab = 'Ratio', P_X = 1.5, P_Y = 25)
+
+# save
+Row1 = plot_grid(plot1, ncol = 1)
+Row2 = plot_grid(PlotNeu, plot2, PlotNLR, ncol = 3, rel_widths = c(1,3,1))
+Comb_Plot = plot_grid(Row1, Row2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/plot/NMIBC_summary proportion_hannum_acc_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.7)
+```
+
+______________________________________________________________
+
+# age and age acceleration
+```{r}
+NMIBC_age <- BLCR_classed_cellprop %>% 
+             select(Age, mAge_Hannum, hannum_acc, Class) %>%
+             `colnames<-`(c('Age','Hannum_mAge', 'Age_Acceleration', 'Class'))
+```
+
+# Function
+```{r}
+# Plot Cell Type
+Plot_Age_Type <- function(DF, YLab, P_X, P_Y) {
+                
+                PLOT = ggplot(DF, aes(x = Ages, 
+                                      y = Values,
+                                      #color = Class,
+                                      fill = Class,
+                                      by = Class)) +
+                       stat_boxplot(geom = "errorbar", width = 0.2,
+                                    position = position_dodge(width = 0.95)) + # For JAMA
+                       geom_boxplot(position = position_dodge(width = 0.95), 
+                                    outlier.shape = 1, 
+                                    #outlier.colour = NA, 
+                                    outlier.size = 1.3) +
+                      #geom_point(position = position_jitterdodge(dodge.width= 0.95, 
+                       #                                          jitter.width = 0.25), 
+                        #         alpha=0.5,size = 0.1) +
+                      stat_compare_means(aes(group = Class), 
+                                         label = "p.format", 
+                                         label.x = P_X, label.y = P_Y, 
+                                         size = 3.4, 
+                                         method = "wilcox.test") +
+                      labs(x = "", y = YLab, colour = "") +
+                      theme_classic() +
+                      #scale_color_nejm() +
+                      scale_fill_jama() +
+                      theme(legend.position = "bottom", # legend.position controls where is legend
+                            panel.grid.major.y = element_line(color = "grey",linetype = 1), # For JAMA
+                            legend.title = element_blank(), # For JAMA
+                            text=element_text(size=12, 
+                                              face = "bold"),
+                            plot.margin = unit(c(6,0,6,0), "pt"))
+                return(PLOT)
+}
+
+```
+
+# plot
+```{r}
+Estimate <- NMIBC_age %>%
+            dplyr::select(Class, Age, Hannum_mAge) %>%
+            gather(key = Ages, value = Values, -Class) 
+plot1 = Plot_Age_Type(Estimate, YLab = "Years", P_X = 0, P_Y = 97)
+
+Estimate2 <- NMIBC_age %>%
+            dplyr::select(Class, Age_Acceleration) %>%
+            gather(key = Ages, value = Values, -Class) 
+plot2 = Plot_Age_Type(Estimate2, YLab = "Years", P_X = 0, P_Y = 24)
+
+# save
+Comb_Plot = plot_grid(plot1, plot2, ncol = 1, rel_heights = c(1, 1))
+ggsave(filename = paste0("/Users/chenjiqing/Public/bladder cancer/Extended Deconvolution/Script/SS_RPMM/plot/NMIBC_age_and_mage_hannum_acc_JAMA.pdf"), plot = Comb_Plot, height = 9, width = 7.5)
+```
